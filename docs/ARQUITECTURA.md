@@ -2,35 +2,89 @@
 
 ## Estado actual
 
-- Arquitectura pendiente de seleccion de stack.
+- Arquitectura seleccionada para juego 3D Android offline con stack web.
+- Diseno funcional del MVP cerrado: historia, misiones, reglas globales y layout base.
 
-## Opciones candidatas
+## Decision de stack
 
-1. Web (HTML/CSS/JS)
-- Ventajas: arranque rapido, facil despliegue, sin instalacion compleja.
-- Riesgos: manejo manual de fisicas/escenas si crece el alcance.
+- Stack principal: `JavaScript vainilla + Three.js + Capacitor`.
+- Plan B: `Godot 4` solo si aparece bloqueo grave de rendimiento o empaquetado.
 
-2. Godot
-- Ventajas: buen motor 2D, flujo rapido para juegos pequenos.
-- Riesgos: requiere toolchain y exportacion segun plataforma.
+## Objetivo de arquitectura v1
 
-3. Unity
-- Ventajas: ecosistema amplio y escalable.
-- Riesgos: mayor complejidad para un MVP pequeno.
+- Escalable: permitir agregar mas misiones y mecanicas sin reescribir el nucleo.
+- Mantenible: separar datos, estado, sistemas y render.
+- Didactica: documentar patrones usados dentro del codigo con comentarios cortos.
 
-## Recomendacion inicial
+## Patrones base a aplicar
 
-- Empezar con opcion Web para entregar un MVP rapido.
+- `State`: control de estados del juego.
+- `Observer (Pub-Sub)`: eventos desacoplados entre sistemas.
+- `Strategy`: reglas intercambiables (consumo, dificultad, objetivos).
+- `Factory`: creacion consistente de entidades de mundo.
+- `Command`: mapeo de input a acciones.
+- `Facade`: API simple para coordinar escena 3D.
+- `Template Method`: flujo base de mision con pasos concretos por tipo.
+- `Repository` (ligero): acceso centralizado a configuraciones de mapa y misiones.
 
-## Arquitectura objetivo (si se elige Web)
+## Estructura objetivo de carpetas
 
-- `src/`: logica del juego.
-- `assets/`: imagenes, audio, fuentes.
-- `docs/`: documentacion del proyecto.
-- `tests/` (opcional inicial): pruebas de logica pura.
+- `src/core/`
+  - `GameLoop.js`
+  - `GameStateManager.js`
+  - `EventBus.js`
+- `src/config/`
+  - `gameConfig.js`
+  - `missions.js`
+  - `mapLayout.js`
+- `src/systems/`
+  - `RoverSystem.js`
+  - `BatterySystem.js`
+  - `PiruletaSystem.js`
+  - `MissionSystem.js`
+  - `PickupSystem.js`
+  - `TerrainSystem.js`
+  - `UISystem.js`
+- `src/scene/`
+  - `WorldScene.js`
+  - `CameraController.js`
+  - `EntityFactory.js`
+- `src/input/`
+  - `InputCommandMapper.js`
+  - `VirtualJoystick.js`
+  - `ActionButton.js`
+- `src/ui/`
+  - `HUD.js`
+  - `screens/`
+- `assets/`
+- `android/` (generado por Capacitor)
+- `docs/`
 
-## Principios tecnicos
+## Estados del juego (State)
 
-- Simplicidad primero.
-- Iteraciones cortas.
-- Todo cambio importante documentado en `docs/DECISIONES.md`.
+- `menu`
+- `briefing`
+- `playing`
+- `paused`
+- `mission_success`
+- `mission_fail`
+- `campaign_complete`
+
+## Contratos principales entre sistemas
+
+- `MissionSystem` define objetivo activo y criterio de cierre.
+- `PiruletaSystem` expone nivel de oxigeno y regla de consumo (fuera/dentro campamento).
+- `BatterySystem` calcula consumo/recarga y notifica energia critica.
+- `RoverSystem` aplica movimiento, pendientes y colisiones.
+- `UISystem` refleja estado jugable y progreso, nunca contiene logica de reglas.
+
+## Reglas de calidad de codigo
+
+- Modulos pequenos con una responsabilidad.
+- Sin logica de juego en componentes de UI.
+- Datos de misiones y mapa siempre en `src/config/`.
+- Comentarios didacticos de patron obligatorios en codigo nuevo:
+  - `Pattern: <Nombre>`
+  - `Motivo: <por que se usa en este punto>`
+  - `Beneficio: <que mejora concreta aporta>`
+- Referencia base: `docs/PATRONES_APLICADOS.md`.
