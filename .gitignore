@@ -10,6 +10,7 @@ dist/
 build/
 .vite/
 coverage/
+vite.log
 
 # Test artifacts
 output/

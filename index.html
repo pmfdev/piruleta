@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Piruleta Kid</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+
+      <div id="hud" class="hud hidden">
+        <div class="bar-wrap">
+          <span>Oxigeno</span>
+          <div class="bar"><div id="oxygen-fill" class="fill oxygen"></div></div>
+        </div>
+        <div class="bar-wrap">
+          <span>Bateria</span>
+          <div class="bar"><div id="battery-fill" class="fill battery"></div></div>
+        </div>
+        <div class="line">
+          <span id="mission-text"></span>
+          <span id="time-text"></span>
+        </div>
+        <div id="hint-text" class="hint"></div>
+      </div>
+
+      <div id="menu" class="overlay">
+        <h1>Piruleta Kid</h1>
+        <p>Ayuda a Piruleta en Marte con el rover.</p>
+        <p>Joystick: mover | Boton accion: recoger, entregar, recargar</p>
+        <button id="start-btn">Iniciar</button>
+      </div>
+
+      <div id="result" class="overlay hidden">
+        <h2 id="result-title"></h2>
+        <p id="result-desc"></p>
+        <button id="restart-btn">Reintentar</button>
+      </div>
+
+      <div id="controls" class="hidden">
+        <div id="joystick-zone" class="joystick-zone">
+          <div id="joystick-knob" class="joystick-knob"></div>
+        </div>
+        <button id="action-btn" class="action-btn">ACCION</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+  </html>
