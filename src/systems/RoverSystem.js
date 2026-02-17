@@ -18,31 +18,36 @@ export class RoverSystem {
     this.z = mapLayout.spawn.z;
     this.yaw = 0;
     this.isMoving = false;
+    this.turnVelocity = 0;
+    this.moveVelocity = 0;
   }
 
   update(dt, input, isRecharging) {
     if (isRecharging) {
+      this.turnVelocity = 0;
+      this.moveVelocity = 0;
       this.world.setRoverTransform(this.x, this.z, this.yaw);
       this.isMoving = false;
       return;
     }
     const mv = input.getMoveVector();
-    this.isMoving = mv.strength > 0.2;
-    if (!this.isMoving) {
-      this.world.setRoverTransform(this.x, this.z, this.yaw);
-      return;
-    }
+    const turnAxis = Math.abs(mv.x) < 0.06 ? 0 : mv.x;
+    const throttleAxis = Math.abs(mv.y) < 0.08 ? 0 : mv.y;
+    const turnCurve = turnAxis * Math.abs(turnAxis);
+    const throttleCurve = throttleAxis * Math.abs(throttleAxis);
 
-    const targetYaw = Math.atan2(mv.x, mv.y);
-    let dy = targetYaw - this.yaw;
-    while (dy > Math.PI) dy -= Math.PI * 2;
-    while (dy < -Math.PI) dy += Math.PI * 2;
-    const maxTurn = gameConfig.roverTurnSpeed * dt;
-    this.yaw += clamp(dy, -maxTurn, maxTurn);
+    const targetTurnVelocity = turnCurve * gameConfig.roverTurnSpeed;
+    const turnBlend = Math.min(1, dt * 10);
+    this.turnVelocity += (targetTurnVelocity - this.turnVelocity) * turnBlend;
+    this.yaw += this.turnVelocity * dt;
 
-    const speed = gameConfig.roverSpeed * mv.strength;
-    const nx = this.x + Math.sin(this.yaw) * speed * dt;
-    const nz = this.z + Math.cos(this.yaw) * speed * dt;
+    const targetMoveVelocity = throttleCurve * gameConfig.roverSpeed;
+    const moveBlend = Math.min(1, dt * (Math.abs(targetMoveVelocity) > Math.abs(this.moveVelocity) ? 7 : 10));
+    this.moveVelocity += (targetMoveVelocity - this.moveVelocity) * moveBlend;
+    this.isMoving = Math.abs(this.moveVelocity) > 0.08;
+
+    const nx = this.x + Math.sin(this.yaw) * this.moveVelocity * dt;
+    const nz = this.z + Math.cos(this.yaw) * this.moveVelocity * dt;
     const slopePenalty = this.sampleSlopePenalty(nx, nz);
     const finalX = this.x + (nx - this.x) * slopePenalty;
     const finalZ = this.z + (nz - this.z) * slopePenalty;

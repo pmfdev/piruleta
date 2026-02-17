@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Piruleta Kid</string>
+    <string name="title_activity_main">Piruleta Kid</string>
+    <string name="package_name">com.pmfdev.piruleta</string>
+    <string name="custom_url_scheme">com.pmfdev.piruleta</string>
+</resources>

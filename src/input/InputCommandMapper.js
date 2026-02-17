@@ -6,6 +6,7 @@ export class InputCommandMapper {
     this.joystick = { x: 0, y: 0 };
     this.actionPressed = false;
     this.keys = new Set();
+    this.activePointerId = null;
     this.zone = joystickZone;
     this.knob = joystickKnob;
     this.actionBtn = actionBtn;
@@ -51,14 +52,20 @@ export class InputCommandMapper {
       this.knob.style.top = "39px";
     };
     this.zone.addEventListener("pointerdown", (e) => {
+      this.activePointerId = e.pointerId;
       this.zone.setPointerCapture(e.pointerId);
       update(e.clientX, e.clientY);
     });
     this.zone.addEventListener("pointermove", (e) => {
-      if ((e.buttons & 1) === 1) update(e.clientX, e.clientY);
+      if (e.pointerId === this.activePointerId) update(e.clientX, e.clientY);
     });
-    this.zone.addEventListener("pointerup", reset);
-    this.zone.addEventListener("pointercancel", reset);
+    const release = (e) => {
+      if (e.pointerId !== this.activePointerId) return;
+      this.activePointerId = null;
+      reset();
+    };
+    this.zone.addEventListener("pointerup", release);
+    this.zone.addEventListener("pointercancel", release);
   }
 
   attachActionButton() {
