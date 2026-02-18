@@ -38,6 +38,7 @@ export class WorldScene {
     this.pickups = [];
     this.rocks = [];
     this.stations = [];
+    this.roverYaw = 0;
 
     this.setupLights();
     this.setupTerrain();
@@ -123,13 +124,16 @@ export class WorldScene {
   }
 
   setRoverTransform(x, z, yaw) {
-    this.rover.rotation.y = yaw;
+    // El modelo apunta visualmente hacia -Z; compensamos para alinearlo con
+    // el heading fisico del sistema de movimiento (+Z cuando yaw=0).
+    this.roverYaw = yaw;
+    this.rover.rotation.y = yaw + Math.PI;
     this.setObjectXZ(this.rover, x, z, 0.5);
   }
 
   updateCamera() {
     const p = this.rover.position;
-    const yaw = this.rover.rotation.y;
+    const yaw = this.roverYaw;
     const back = new THREE.Vector3(Math.sin(yaw) * -11, 6.5, Math.cos(yaw) * -11);
     this.camera.position.set(p.x + back.x, p.y + back.y, p.z + back.z);
     this.camera.lookAt(p.x, p.y + 1, p.z);

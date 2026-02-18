@@ -32,11 +32,15 @@ export class RoverSystem {
     }
     const mv = input.getMoveVector();
     const turnAxis = Math.abs(mv.x) < 0.06 ? 0 : mv.x;
-    const throttleAxis = Math.abs(mv.y) < 0.08 ? 0 : mv.y;
+    let throttleAxis = Math.abs(mv.y) < 0.08 ? 0 : mv.y;
+    const turningInPlaceIntent = Math.abs(turnAxis) > 0.18 && (Math.abs(turnAxis) > Math.abs(throttleAxis) * 1.35 || Math.abs(throttleAxis) < 0.25);
+    if (turningInPlaceIntent) throttleAxis = 0;
     const turnCurve = turnAxis * Math.abs(turnAxis);
     const throttleCurve = throttleAxis * Math.abs(throttleAxis);
 
-    const targetTurnVelocity = turnCurve * gameConfig.roverTurnSpeed;
+    // En tercera persona (camara detras), giro positivo del joystick debe
+    // llevar el morro del rover hacia la derecha en pantalla.
+    const targetTurnVelocity = -turnCurve * gameConfig.roverTurnSpeed;
     const turnBlend = Math.min(1, dt * 10);
     this.turnVelocity += (targetTurnVelocity - this.turnVelocity) * turnBlend;
     this.yaw += this.turnVelocity * dt;

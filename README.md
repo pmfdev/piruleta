@@ -9,6 +9,7 @@ Repositorio base del juego para el sobrino.
 - [Plan de trabajo](docs/PLAN.md)
 - [Arquitectura](docs/ARQUITECTURA.md)
 - [Patrones aplicados](docs/PATRONES_APLICADOS.md)
+- [Relevo de sesion](docs/RELEVO_SESION.md)
 - [Decisiones](docs/DECISIONES.md)
 - [Seguimiento diario](docs/SEGUIMIENTO.md)
 
