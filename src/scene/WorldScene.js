@@ -163,6 +163,11 @@ function olympusHeight(x, z, olympusMountain) {
   const d = Math.hypot(dx, dz);
   if (d > olympusMountain.radius) return 0;
 
+  const summitFlatRadius = olympusMountain.summitFlatRadius ?? olympusMountain.calderaRadius;
+  const summitEdgeT = 1 - summitFlatRadius / olympusMountain.radius;
+  const summitFlatHeight = olympusMountain.height * Math.pow(Math.max(0, summitEdgeT), 1.2);
+  if (d <= summitFlatRadius) return summitFlatHeight;
+
   const t = 1 - d / olympusMountain.radius;
   let h = olympusMountain.height * Math.pow(t, 1.2);
 
@@ -179,38 +184,14 @@ function olympusHeight(x, z, olympusMountain) {
   return h;
 }
 
-function caveCarveDepth(x, z, caveDefs) {
-  if (!caveDefs?.length) return 0;
-  let carved = 0;
-  caveDefs.forEach((cave) => {
-    const points = cave.path;
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i];
-      const b = points[i + 1];
-      const d = distanceToSegment2D(x, z, a.x, a.z, b.x, b.z);
-      if (d >= cave.radius) continue;
-      const t = 1 - d / cave.radius;
-      const segmentDepth = cave.depth * Math.pow(t, 3.2);
-      if (segmentDepth > carved) carved = segmentDepth;
-    }
-  });
-  return carved;
+function terrainBaseHeight(x, z, layout) {
+  const hills = baseHeightFromHills(x, z, layout.mountains);
+  const olympus = olympusHeight(x, z, layout.olympusMountain);
+  return hills + olympus;
 }
 
 function terrainHeight(x, z, layout) {
-  const hills = baseHeightFromHills(x, z, layout.mountains);
-  const olympus = olympusHeight(x, z, layout.olympusMountain);
-  let carved = caveCarveDepth(x, z, layout.mountainCaves);
-  if (layout.olympusMountain) {
-    const dx = x - layout.olympusMountain.center.x;
-    const dz = z - layout.olympusMountain.center.z;
-    const d = Math.hypot(dx, dz);
-    const protectInner = layout.olympusMountain.calderaRadius + 7;
-    const protectOuter = layout.olympusMountain.calderaRadius + 18;
-    const summitProtect = clamp01((d - protectInner) / Math.max(0.0001, protectOuter - protectInner));
-    carved *= summitProtect;
-  }
-  return hills + olympus - carved;
+  return terrainBaseHeight(x, z, layout);
 }
 
 // Pattern: Facade
@@ -239,6 +220,7 @@ export class WorldScene {
     this.stations = [];
     this.caveShells = [];
     this.scenicMarkers = [];
+    this.referenceCube = null;
     this.roverYaw = 0;
     this.tmpForward = new THREE.Vector3();
     this.tmpRight = new THREE.Vector3();
@@ -249,6 +231,10 @@ export class WorldScene {
     this.tmpCamResolved = new THREE.Vector3();
     this.tmpCamPoint = new THREE.Vector3();
     this.tmpCamDir = new THREE.Vector3();
+    this.cameraOrbitYaw = 0;
+    this.cameraOrbitPitch = 0;
+    this.lookInput = { x: 0, y: 0, strength: 0 };
+    this.cameraMode = "follow";
 
     this.setupLights();
     this.setupTerrain();
@@ -299,6 +285,7 @@ export class WorldScene {
       normalScale: new THREE.Vector2(2.25, 2.25),
     });
     this.ground = new THREE.Mesh(geometry, material);
+    this.ground.layers.set(0);
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
@@ -327,17 +314,20 @@ export class WorldScene {
       this.scene.add(rock);
       this.rocks.push({ ...r, mesh: rock });
     });
+
+    this.referenceCube = null;
   }
 
   setupMountainLandmarks() {
     const summit = mapLayout.olympusMountain?.center;
     if (summit) {
+      const markerSpot = { x: -44, z: -8 };
       const summitRing = new THREE.Mesh(
         new THREE.TorusGeometry(4.8, 0.35, 14, 48),
         new THREE.MeshStandardMaterial({ color: 0xffd28e, emissive: 0x3c1f00, roughness: 0.68 })
       );
       summitRing.rotation.x = Math.PI / 2;
-      this.setObjectXZ(summitRing, summit.x, summit.z, 1.2);
+      this.setObjectXZ(summitRing, markerSpot.x, markerSpot.z, 1.2);
       this.scene.add(summitRing);
       this.scenicMarkers.push(summitRing);
 
@@ -345,85 +335,11 @@ export class WorldScene {
         new THREE.CylinderGeometry(0.6, 0.9, 5.6, 16),
         new THREE.MeshStandardMaterial({ color: 0xf0c78f, emissive: 0x241000, roughness: 0.5 })
       );
-      this.setObjectXZ(beacon, summit.x, summit.z, 4.1);
+      this.setObjectXZ(beacon, markerSpot.x, markerSpot.z, 4.1);
       this.scene.add(beacon);
       this.scenicMarkers.push(beacon);
     }
 
-    mapLayout.mountainCaves?.forEach((cave) => {
-      const floorPath3 = cave.path.map((p) => new THREE.Vector3(p.x, this.getHeightAt(p.x, p.z) + 0.55, p.z));
-      if (floorPath3.length < 2) return;
-
-      const tunnelPath3 = cave.path.slice(1).map((p) => new THREE.Vector3(p.x, this.getHeightAt(p.x, p.z) + cave.radius * 1.55, p.z));
-      if (tunnelPath3.length >= 2) {
-        const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPath3);
-        const outerShell = new THREE.Mesh(
-          new THREE.TubeGeometry(tunnelCurve, 92, cave.radius * 1.28, 24, false),
-          new THREE.MeshStandardMaterial({ color: 0x5a3b2d, roughness: 0.94, metalness: 0.02 })
-        );
-        this.scene.add(outerShell);
-        this.caveShells.push(outerShell);
-
-        const innerTunnel = new THREE.Mesh(
-          new THREE.TubeGeometry(tunnelCurve, 92, cave.radius * 1.02, 24, false),
-          new THREE.MeshStandardMaterial({
-            color: 0x251913,
-            roughness: 0.98,
-            metalness: 0,
-            side: THREE.BackSide,
-          })
-        );
-        this.scene.add(innerTunnel);
-        this.caveShells.push(innerTunnel);
-      }
-
-      const floorCurve = new THREE.CatmullRomCurve3(floorPath3);
-      const tunnelFloor = new THREE.Mesh(
-        new THREE.TubeGeometry(floorCurve, 90, cave.radius * 0.74, 14, false),
-        new THREE.MeshStandardMaterial({ color: 0x6a4a39, roughness: 0.98, metalness: 0 })
-      );
-      tunnelFloor.scale.y = 0.26;
-      this.scene.add(tunnelFloor);
-      this.caveShells.push(tunnelFloor);
-
-      const entrance = cave.path[0];
-      const next = cave.path[1] ?? entrance;
-      const dirX = next.x - entrance.x;
-      const dirZ = next.z - entrance.z;
-      const entranceYaw = Math.atan2(dirX, dirZ);
-
-      const mouthShell = new THREE.Mesh(
-        new THREE.SphereGeometry(cave.radius * 1.95, 26, 18, 0, Math.PI * 2, 0, Math.PI * 0.62),
-        new THREE.MeshStandardMaterial({ color: 0x6d4a37, roughness: 0.95, metalness: 0.01 })
-      );
-      mouthShell.rotation.y = entranceYaw;
-      this.setObjectXZ(mouthShell, entrance.x, entrance.z, cave.radius * 0.12);
-      this.scene.add(mouthShell);
-      this.caveShells.push(mouthShell);
-
-      const arch = new THREE.Mesh(
-        new THREE.TorusGeometry(cave.radius * 1.16, 0.58, 14, 30),
-        new THREE.MeshStandardMaterial({ color: 0x7b5842, roughness: 0.88 })
-      );
-      arch.rotation.set(Math.PI / 2, entranceYaw, 0);
-      this.setObjectXZ(arch, entrance.x, entrance.z, cave.radius * 0.95);
-      this.scene.add(arch);
-      this.caveShells.push(arch);
-
-      const mouthShadow = new THREE.Mesh(
-        new THREE.CircleGeometry(cave.radius * 0.94, 28),
-        new THREE.MeshBasicMaterial({ color: 0x110806, transparent: true, opacity: 0.92 })
-      );
-      mouthShadow.rotation.x = -Math.PI / 2;
-      this.setObjectXZ(mouthShadow, entrance.x + Math.sin(entranceYaw) * 1.2, entrance.z + Math.cos(entranceYaw) * 1.2, 0.32);
-      this.scene.add(mouthShadow);
-      this.caveShells.push(mouthShadow);
-
-      const guideLight = new THREE.PointLight(0xffb878, 1.35, 18, 2);
-      guideLight.position.set(entrance.x, this.getHeightAt(entrance.x, entrance.z) + cave.radius * 1.2, entrance.z);
-      this.scene.add(guideLight);
-      this.caveShells.push(guideLight);
-    });
   }
 
   setPickups(pickups) {
@@ -591,30 +507,59 @@ export class WorldScene {
 
   updateCamera() {
     const p = this.rover.position;
-    const yaw = this.roverYaw;
+    const yaw = this.roverYaw + this.cameraOrbitYaw;
     const region = this.getTerrainRegion(p.x, p.z);
     const inCave = region === "cueva";
-
-    const followDistance = inCave ? 3.4 : 11;
-    const followHeight = inCave ? 2.8 : 6.8;
-    const anchorHeight = inCave ? 1.3 : 1.6;
-    const lookHeight = inCave ? 1.15 : 1;
-    const sideOffset = inCave ? 0.42 : 0;
-    const targetFov = inCave ? 72 : 60;
-
     const roverGroundY = this.getHeightAt(p.x, p.z);
+
+    if (this.cameraMode === "first_person") {
+      const eyeHeight = inCave ? 1.35 : 1.6;
+      const eyeY = Math.max(p.y + eyeHeight, roverGroundY + 1.15);
+      const camX = p.x + Math.sin(yaw) * 0.45;
+      const camZ = p.z + Math.cos(yaw) * 0.45;
+      this.camera.position.set(camX, eyeY, camZ);
+
+      const lookDist = 9;
+      this.tmpLookAt.set(
+        camX + Math.sin(yaw) * lookDist,
+        eyeY + this.cameraOrbitPitch * 4.2,
+        camZ + Math.cos(yaw) * lookDist
+      );
+      this.camera.lookAt(this.tmpLookAt);
+
+      const fpFov = 78;
+      const nextFov = this.camera.fov + (fpFov - this.camera.fov) * 0.15;
+      if (Math.abs(nextFov - this.camera.fov) > 0.01) {
+        this.camera.fov = nextFov;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
+
+    const veryFarMode = this.cameraMode === "very_far";
+    const farMode = this.cameraMode === "far";
+    const followDistance = inCave ? (veryFarMode ? 8.4 : farMode ? 6.2 : 3.4) : veryFarMode ? 27 : farMode ? 18.5 : 11;
+    const followHeight = inCave ? (veryFarMode ? 5.2 : farMode ? 4.1 : 2.8) : veryFarMode ? 13.2 : farMode ? 9.8 : 6.8;
+    const anchorHeight = inCave ? (veryFarMode ? 1.6 : farMode ? 1.45 : 1.3) : veryFarMode ? 2.6 : farMode ? 2.2 : 1.6;
+    const lookHeight = inCave ? (veryFarMode ? 1.28 : farMode ? 1.2 : 1.15) : veryFarMode ? 1.45 : farMode ? 1.3 : 1;
+    const sideOffset = inCave ? 0.42 : 0;
+    const targetFov = inCave ? (veryFarMode ? 76 : farMode ? 74 : 72) : veryFarMode ? 50 : farMode ? 56 : 60;
+    const pitch = this.cameraOrbitPitch;
+    const horizDistance = followDistance * Math.max(0.45, Math.cos(pitch));
+    const pitchHeightOffset = followDistance * Math.sin(pitch) * 0.85;
+
     const anchorY = Math.max(p.y + anchorHeight, roverGroundY + (inCave ? 1.1 : 1.45));
     this.tmpCamAnchor.set(p.x, anchorY, p.z);
     this.tmpCamDesired.set(
-      p.x + Math.sin(yaw) * -followDistance + Math.cos(yaw) * sideOffset,
-      p.y + followHeight,
-      p.z + Math.cos(yaw) * -followDistance - Math.sin(yaw) * sideOffset
+      p.x + Math.sin(yaw) * -horizDistance + Math.cos(yaw) * sideOffset,
+      p.y + followHeight + pitchHeightOffset,
+      p.z + Math.cos(yaw) * -horizDistance - Math.sin(yaw) * sideOffset
     );
 
     this.resolveCameraCollision(this.tmpCamAnchor, this.tmpCamDesired, inCave ? 0.18 : 0.3, inCave ? 4 : Infinity);
     this.camera.position.copy(this.tmpCamResolved);
 
-    this.tmpLookAt.set(p.x, p.y + lookHeight, p.z);
+    this.tmpLookAt.set(p.x, p.y + lookHeight + pitch * 1.6, p.z);
     this.camera.lookAt(this.tmpLookAt);
 
     const nextFov = this.camera.fov + (targetFov - this.camera.fov) * 0.12;
@@ -635,5 +580,35 @@ export class WorldScene {
   render() {
     this.updateCamera();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  applyCameraLookInput(lookVec, dt) {
+    this.lookInput = lookVec ?? this.lookInput;
+    if (!lookVec) return;
+    const x = Math.abs(lookVec.x) < 0.06 ? 0 : lookVec.x;
+    const y = Math.abs(lookVec.y) < 0.06 ? 0 : lookVec.y;
+    if (x === 0 && y === 0) return;
+
+    const yawSpeed = 1.8;
+    const pitchSpeed = 1.35;
+    this.cameraOrbitYaw += x * yawSpeed * dt;
+    this.cameraOrbitPitch = clamp01((this.cameraOrbitPitch + y * pitchSpeed * dt + 0.5) / 1.05) * 1.05 - 0.5;
+  }
+
+  cycleCameraMode() {
+    const order = ["first_person", "follow", "far", "very_far"];
+    const i = order.indexOf(this.cameraMode);
+    this.cameraMode = order[(i + 1 + order.length) % order.length];
+    return this.cameraMode;
+  }
+
+  setCameraMode(mode) {
+    if (mode === "first_person" || mode === "follow" || mode === "far" || mode === "very_far") {
+      this.cameraMode = mode;
+    }
+  }
+
+  getCameraMode() {
+    return this.cameraMode;
   }
 }

@@ -1,10 +1,37 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // Pattern: Factory
 // Motivo: crear entidades 3D con una construccion consistente.
 // Beneficio: evita duplicar inicializacion de mallas y materiales.
 export class EntityFactory {
-  createRover() {
+  constructor(options = {}) {
+    this.roverModelPath = options.roverModelPath ?? "/models/rover.glb";
+    this.roverModelScale = options.roverModelScale ?? 1.1;
+    this.loader = new GLTFLoader();
+    this.roverModelScene = null;
+    this.roverModelPromise = null;
+  }
+
+  loadRoverModel() {
+    if (this.roverModelScene) return Promise.resolve(this.roverModelScene);
+    if (this.roverModelPromise) return this.roverModelPromise;
+
+    this.roverModelPromise = new Promise((resolve, reject) => {
+      this.loader.load(
+        this.roverModelPath,
+        (gltf) => {
+          this.roverModelScene = gltf.scene;
+          resolve(gltf.scene);
+        },
+        undefined,
+        (error) => reject(error)
+      );
+    });
+    return this.roverModelPromise;
+  }
+
+  createFallbackRover() {
     const root = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(2.1, 1, 3),
@@ -19,6 +46,33 @@ export class EntityFactory {
     );
     mast.position.set(0, 2, -0.9);
     root.add(mast);
+    return root;
+  }
+
+  createRover() {
+    const root = new THREE.Group();
+    const fallback = this.createFallbackRover();
+    root.add(fallback);
+
+    this.loadRoverModel()
+      .then((source) => {
+        const roverModel = source.clone(true);
+        roverModel.scale.setScalar(this.roverModelScale);
+        roverModel.position.set(0, 0, 0);
+
+        roverModel.traverse((node) => {
+          if (!node.isMesh) return;
+          node.castShadow = true;
+          node.receiveShadow = true;
+        });
+
+        root.remove(fallback);
+        root.add(roverModel);
+      })
+      .catch(() => {
+        // Si el modelo no existe, mantenemos el rover procedural.
+      });
+
     return root;
   }
 

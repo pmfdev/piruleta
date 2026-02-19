@@ -125,10 +125,23 @@ button {
   padding: 12px;
   z-index: 3;
   display: flex;
-  flex-direction: row-reverse;
   justify-content: space-between;
   align-items: end;
   pointer-events: none;
+}
+
+.control-cluster {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.left-cluster {
+  flex-direction: row;
+}
+
+.right-cluster {
+  flex-direction: row-reverse;
 }
 
 .joystick-zone {
@@ -152,12 +165,27 @@ button {
   top: 39px;
 }
 
+.camera-joystick {
+  border-color: rgba(111, 240, 255, 0.38);
+  background: rgba(12, 29, 35, 0.36);
+}
+
 .action-btn {
   width: 110px;
   height: 110px;
   border-radius: 50%;
   font-weight: 700;
   pointer-events: auto;
+}
+
+.view-btn {
+  width: 110px;
+  height: 58px;
+  border-radius: 14px;
+  font-weight: 700;
+  pointer-events: auto;
+  background: linear-gradient(180deg, #92e7ff, #5bc9ef);
+  color: #0f2a34;
 }
 
 .hidden {

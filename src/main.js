@@ -21,9 +21,12 @@ const eventBus = new EventBus();
 const stateManager = new GameStateManager("menu");
 const world = new WorldScene(document.getElementById("game-canvas"));
 const ui = new UISystem();
+const viewBtn = document.getElementById("view-btn");
 const input = new InputCommandMapper(
   document.getElementById("joystick-zone"),
   document.getElementById("joystick-knob"),
+  document.getElementById("camera-joystick-zone"),
+  document.getElementById("camera-joystick-knob"),
   document.getElementById("action-btn")
 );
 
@@ -34,6 +37,15 @@ let mission = null;
 let totalTime = 0;
 let hint = "Pulsa ACCION cerca de objetos";
 let lastAction = false;
+
+function updateViewButtonLabel() {
+  if (!viewBtn) return;
+  const mode = world.getCameraMode();
+  if (mode === "first_person") viewBtn.textContent = "CAM: 1P";
+  else if (mode === "very_far") viewBtn.textContent = "CAM: MUY LEJOS";
+  else if (mode === "far") viewBtn.textContent = "CAM: LEJOS";
+  else viewBtn.textContent = "CAM: 3P";
+}
 
 function resetGame() {
   rover = new RoverSystem(world, mapLayout);
@@ -84,6 +96,7 @@ function update(dt) {
   }
 
   rover.update(dt, input, battery.recharging || !battery.canMove());
+  world.applyCameraLookInput(input.getLookVector(), dt);
   piruleta.update(dt);
 
   if (actionPressed && !lastAction) {
@@ -115,11 +128,14 @@ function render() {
 function startPlaying() {
   if (!stateManager.transition("playing")) return;
   resetGame();
+  world.setCameraMode("follow");
+  updateViewButtonLabel();
   ui.showPlayingUI();
 }
 
 setupEvents();
 resetGame();
+updateViewButtonLabel();
 ui.showMenu();
 
 document.getElementById("start-btn").addEventListener("click", startPlaying);
@@ -127,8 +143,18 @@ document.getElementById("restart-btn").addEventListener("click", () => {
   stateManager.transition("menu");
   ui.showMenu();
 });
+if (viewBtn) {
+  viewBtn.addEventListener("click", () => {
+    world.cycleCameraMode();
+    updateViewButtonLabel();
+  });
+}
 window.addEventListener("resize", () => world.resize());
 window.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() === "v") {
+    world.cycleCameraMode();
+    updateViewButtonLabel();
+  }
   if (e.key.toLowerCase() === "f") {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
     else document.exitFullscreen();
@@ -145,6 +171,7 @@ window.render_game_to_text = () => {
     coord_system: "x derecha, z abajo/arriba en el plano; y altura",
     mode: stateManager.getState(),
     rover: { x: Number(roverPos.x.toFixed(2)), z: Number(roverPos.z.toFixed(2)), yaw: Number(rover.yaw.toFixed(2)) },
+    camera_mode: world.getCameraMode(),
     terrain_region: world.getTerrainRegion(roverPos.x, roverPos.z),
     piruleta: { oxygen: Number(piruleta.oxygen.toFixed(2)), camp_built: piruleta.campBuilt },
     battery: { level: Number(battery.level.toFixed(2)), recharging: battery.recharging },

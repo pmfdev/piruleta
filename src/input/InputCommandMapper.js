@@ -2,16 +2,20 @@
 // Motivo: separar dispositivo de entrada de las acciones del rover.
 // Beneficio: soporta teclado y tactil con la misma interfaz.
 export class InputCommandMapper {
-  constructor(joystickZone, joystickKnob, actionBtn) {
+  constructor(joystickZone, joystickKnob, cameraZone, cameraKnob, actionBtn) {
     this.joystick = { x: 0, y: 0 };
+    this.lookJoystick = { x: 0, y: 0 };
     this.actionPressed = false;
     this.keys = new Set();
-    this.activePointerId = null;
+    this.movePointerId = null;
+    this.lookPointerId = null;
     this.zone = joystickZone;
     this.knob = joystickKnob;
+    this.cameraZone = cameraZone;
+    this.cameraKnob = cameraKnob;
     this.actionBtn = actionBtn;
     this.attachKeyboard();
-    this.attachTouchJoystick();
+    this.attachTouchJoysticks();
     this.attachActionButton();
   }
 
@@ -24,48 +28,52 @@ export class InputCommandMapper {
     });
   }
 
-  attachTouchJoystick() {
-    if (!this.zone) return;
+  attachTouchJoysticks() {
     const radius = 45;
-    const center = () => {
-      const rect = this.zone.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    const attachStick = (zone, knob, state, pointerKey) => {
+      if (!zone || !knob) return;
+      const center = () => {
+        const rect = zone.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      };
+      const update = (clientX, clientY) => {
+        const c = center();
+        let dx = clientX - c.x;
+        let dy = clientY - c.y;
+        const len = Math.hypot(dx, dy);
+        if (len > radius) {
+          dx = (dx / len) * radius;
+          dy = (dy / len) * radius;
+        }
+        state.x = dx / radius;
+        state.y = dy / radius;
+        knob.style.left = `${39 + dx}px`;
+        knob.style.top = `${39 + dy}px`;
+      };
+      const reset = () => {
+        state.x = 0;
+        state.y = 0;
+        knob.style.left = "39px";
+        knob.style.top = "39px";
+      };
+      zone.addEventListener("pointerdown", (e) => {
+        this[pointerKey] = e.pointerId;
+        zone.setPointerCapture(e.pointerId);
+        update(e.clientX, e.clientY);
+      });
+      zone.addEventListener("pointermove", (e) => {
+        if (e.pointerId === this[pointerKey]) update(e.clientX, e.clientY);
+      });
+      const release = (e) => {
+        if (e.pointerId !== this[pointerKey]) return;
+        this[pointerKey] = null;
+        reset();
+      };
+      zone.addEventListener("pointerup", release);
+      zone.addEventListener("pointercancel", release);
     };
-    const update = (clientX, clientY) => {
-      const c = center();
-      let dx = clientX - c.x;
-      let dy = clientY - c.y;
-      const len = Math.hypot(dx, dy);
-      if (len > radius) {
-        dx = (dx / len) * radius;
-        dy = (dy / len) * radius;
-      }
-      this.joystick.x = dx / radius;
-      this.joystick.y = dy / radius;
-      this.knob.style.left = `${39 + dx}px`;
-      this.knob.style.top = `${39 + dy}px`;
-    };
-    const reset = () => {
-      this.joystick.x = 0;
-      this.joystick.y = 0;
-      this.knob.style.left = "39px";
-      this.knob.style.top = "39px";
-    };
-    this.zone.addEventListener("pointerdown", (e) => {
-      this.activePointerId = e.pointerId;
-      this.zone.setPointerCapture(e.pointerId);
-      update(e.clientX, e.clientY);
-    });
-    this.zone.addEventListener("pointermove", (e) => {
-      if (e.pointerId === this.activePointerId) update(e.clientX, e.clientY);
-    });
-    const release = (e) => {
-      if (e.pointerId !== this.activePointerId) return;
-      this.activePointerId = null;
-      reset();
-    };
-    this.zone.addEventListener("pointerup", release);
-    this.zone.addEventListener("pointercancel", release);
+    attachStick(this.zone, this.knob, this.joystick, "movePointerId");
+    attachStick(this.cameraZone, this.cameraKnob, this.lookJoystick, "lookPointerId");
   }
 
   attachActionButton() {
@@ -87,8 +95,23 @@ export class InputCommandMapper {
     if (this.keys.has("ArrowRight") || this.keys.has("KeyD")) x += 1;
     if (this.keys.has("ArrowUp") || this.keys.has("KeyW")) y += 1;
     if (this.keys.has("ArrowDown") || this.keys.has("KeyS")) y -= 1;
-    const len = Math.hypot(x, y) || 1;
-    return { x: x / len, y: y / len, strength: Math.min(1, Math.hypot(x, y)) };
+    const len = Math.hypot(x, y);
+    if (len > 1) {
+      x /= len;
+      y /= len;
+    }
+    return { x, y, strength: Math.min(1, Math.hypot(x, y)) };
+  }
+
+  getLookVector() {
+    let x = this.lookJoystick.x;
+    let y = -this.lookJoystick.y;
+    const len = Math.hypot(x, y);
+    if (len > 1) {
+      x /= len;
+      y /= len;
+    }
+    return { x, y, strength: Math.min(1, Math.hypot(x, y)) };
   }
 
   consumeActionPressed() {

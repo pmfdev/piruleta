@@ -1,3 +1,24 @@
+### Fecha: 2026-02-19
+- Rama activa: `develop`
+- Ultimo commit util: `(ver ultimo commit de esta sesion)`
+- Estado actual: se limpia la escena retirando montanas experimentales de cueva y se deja soporte para cargar rover GLB real con fallback estable.
+- Que funciona:
+  - Juego vuelve a estado estable sin montanas visuales extra.
+  - `EntityFactory` carga `/models/rover.glb` y, si falla, mantiene rover procedural.
+  - Build de produccion validado tras cambios.
+- Que falta:
+  - Reemplazar `public/models/rover.glb` por un modelo realista definitivo.
+  - Ajustar escala, orientacion y altura del rover GLB en gameplay.
+- Proximos 3 pasos:
+  1. Importar rover GLB final (asset externo de calidad).
+  2. Tuning visual del rover (scale/rotation/offset) en `EntityFactory`.
+  3. Validar en camaras 1P/3P/very_far y en Android.
+- Riesgos/Bloqueos:
+  - En este entorno no hay descarga fiable de assets externos, por lo que puede requerir copiar el GLB manualmente.
+- Comandos utiles:
+  - `npm run dev -- --host 127.0.0.1 --port 5173`
+  - `npm run build`
+  - `node scripts/generate-rover-glb.mjs`
 # Relevo de Sesion
 
 Este archivo sirve para retomar el proyecto sin perder contexto entre sesiones.
@@ -85,3 +106,5 @@ Este archivo sirve para retomar el proyecto sin perder contexto entre sesiones.
   - `npm install`
   - `npm run dev -- --host 127.0.0.1 --port 5173`
   - `npm run build`
+
+
