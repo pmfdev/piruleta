@@ -14,6 +14,16 @@ export const mapLayout = {
     { x: -12, z: 18, radius: 20, height: 4.5 },
     { x: 26, z: 24, radius: 16, height: 3.8 },
   ],
+  olympusMountain: {
+    center: { x: 52, z: 52 },
+    radius: 46,
+    height: 30,
+    calderaRadius: 11,
+    calderaDepth: 7.5,
+    rimRadius: 15,
+    rimHeight: 3.6,
+  },
+  mountainCaves: [],
   oxygenPickups: [
     { id: "o1", x: -8, z: -6 },
     { id: "o2", x: 20, z: 10 },

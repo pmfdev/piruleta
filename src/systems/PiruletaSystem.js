@@ -20,9 +20,7 @@ export class PiruletaSystem {
   }
 
   update(dt) {
-    const mode = this.campBuilt ? "safe" : "outside";
-    this.oxygen = Math.max(0, this.oxygen - oxygenStrategies[mode](dt));
-    if (this.oxygen <= 0) this.eventBus.emit("oxygen_empty");
+    this.oxygen = 100;
   }
 
   addOxygenBottle() {

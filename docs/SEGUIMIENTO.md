@@ -133,3 +133,40 @@ Este archivo mantiene el hilo de trabajo entre sesiones.
   - Crear scaffold tecnico del proyecto JS + Three.js.
   - Implementar `GameStateManager`, `EventBus` y configuraciones base.
   - Construir escena jugable minima con HUD de oxigeno/bateria/tiempo.
+
+### Fecha: 2026-02-19
+
+- Sesion: Relieve avanzado, ajustes jugables y despliegue Android
+- Rama: `dev_V2`
+- Objetivo del dia: Mejorar terreno/camara y dejar build instalable en emulador y movil.
+- Trabajo realizado:
+  - Integrado Monte Olimpo (mega relieve) con mapa ampliado.
+  - Mejorado contacto rover-terreno para evitar hundimiento en pendientes.
+  - Implementado y luego retirado la mecanica de deslizamiento por solicitud.
+  - Oxigeno fijado al 100% permanente por solicitud.
+  - Eliminadas todas las cuevas por solicitud final (`mountainCaves: []`).
+  - Implementado control de camara con colision contra terreno y ajuste en regiones.
+  - Ajustados scripts Vite a `--configLoader runner` y agregado `vite.config.js` para evitar fallos EPERM en este entorno.
+  - APK debug generado e instalado en emulador y movil via `adb`.
+- Decisiones tomadas (IDs): `DEC-006` (vigente), ajustes de sesion sin nuevo ID formal.
+- Archivos tocados:
+  - `.gitignore`
+  - `package.json`
+  - `vite.config.js`
+  - `src/config/gameConfig.js`
+  - `src/config/mapLayout.js`
+  - `src/main.js`
+  - `src/scene/WorldScene.js`
+  - `src/systems/PiruletaSystem.js`
+  - `src/systems/RoverSystem.js`
+  - `docs/SEGUIMIENTO.md`
+- Estado de pruebas:
+  - `npm run build` OK.
+  - Validaciones Playwright en web sin errores de consola.
+  - Instalacion Android en emulador OK.
+  - Instalacion Android en movil OK (tras habilitar permisos del dispositivo).
+- Bloqueos:
+  - Restriccion temporal `INSTALL_FAILED_USER_RESTRICTED` en movil (resuelto al permitir instalacion por USB).
+- Siguientes pasos:
+  - Validar jugabilidad completa en movil real (controles tactiles + rendimiento).
+  - Ajustar camara dentro de laderas pronunciadas si aparecen casos extremos.

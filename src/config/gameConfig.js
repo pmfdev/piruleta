@@ -14,5 +14,5 @@ export const gameConfig = {
   roverTurnSpeed: Math.PI * (120 / 180),
   interactionDistance: 4.5,
   campSafeDistance: 6,
-  mapLimit: 60,
+  mapLimit: 110,
 };

@@ -145,6 +145,7 @@ window.render_game_to_text = () => {
     coord_system: "x derecha, z abajo/arriba en el plano; y altura",
     mode: stateManager.getState(),
     rover: { x: Number(roverPos.x.toFixed(2)), z: Number(roverPos.z.toFixed(2)), yaw: Number(rover.yaw.toFixed(2)) },
+    terrain_region: world.getTerrainRegion(roverPos.x, roverPos.z),
     piruleta: { oxygen: Number(piruleta.oxygen.toFixed(2)), camp_built: piruleta.campBuilt },
     battery: { level: Number(battery.level.toFixed(2)), recharging: battery.recharging },
     mission: current

@@ -2,7 +2,147 @@ import * as THREE from "three";
 import { mapLayout } from "../config/mapLayout.js";
 import { EntityFactory } from "./EntityFactory.js";
 
-function smoothHeight(x, z, mountains) {
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function smoothStep(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function hash2D(x, y) {
+  const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+  return s - Math.floor(s);
+}
+
+function valueNoise2D(x, y) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const tx = smoothStep(x - x0);
+  const ty = smoothStep(y - y0);
+
+  const v00 = hash2D(x0, y0);
+  const v10 = hash2D(x1, y0);
+  const v01 = hash2D(x0, y1);
+  const v11 = hash2D(x1, y1);
+
+  const a = v00 + (v10 - v00) * tx;
+  const b = v01 + (v11 - v01) * tx;
+  return a + (b - a) * ty;
+}
+
+function fbm2D(x, y, octaves = 5) {
+  let value = 0;
+  let amplitude = 0.55;
+  let frequency = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    value += valueNoise2D(x * frequency, y * frequency) * amplitude;
+    norm += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2.1;
+  }
+  return value / Math.max(0.0001, norm);
+}
+
+function createMarsGroundMaps(size = 1024) {
+  const heights = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const warpX = fbm2D(u * 3.1 + 17.3, v * 3.1 - 9.2, 3) - 0.5;
+      const warpY = fbm2D(u * 2.8 - 11.4, v * 2.8 + 5.7, 3) - 0.5;
+      const su = u + warpX * 0.22;
+      const sv = v + warpY * 0.22;
+      const macro = fbm2D(su * 5.6, sv * 5.6, 5);
+      const micro = fbm2D(su * 55.0, sv * 47.0, 4);
+      const gravel = fbm2D(su * 130.0 + 1.7, sv * 122.0 - 2.3, 2);
+      const ridge = Math.abs(Math.sin((su * 22.0 - sv * 17.0) * Math.PI)) * 0.1;
+      heights[y * size + x] = clamp01(macro * 0.52 + micro * 0.26 + gravel * 0.14 + ridge * 0.08);
+    }
+  }
+
+  const albedoData = new Uint8Array(size * size * 4);
+  const roughnessData = new Uint8Array(size * size * 4);
+  const normalData = new Uint8Array(size * size * 4);
+
+  const texel = (tx, ty) => {
+    const sx = (tx + size) % size;
+    const sy = (ty + size) % size;
+    return heights[sy * size + sx];
+  };
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const p = i * 4;
+      const h = heights[i];
+      const rustTint = fbm2D(x * 0.01 + 2.1, y * 0.01 - 3.4, 3);
+      const darkRock = fbm2D(x * 0.018 - 6.3, y * 0.018 + 4.9, 3);
+      const basaltMask = clamp01((darkRock - 0.52) * 4.6);
+
+      const r = Math.round(102 + h * 96 + rustTint * 12 - basaltMask * 54);
+      const g = Math.round(54 + h * 52 + rustTint * 6 - basaltMask * 32);
+      const b = Math.round(32 + h * 24 - basaltMask * 18);
+      albedoData[p] = Math.max(0, Math.min(255, r));
+      albedoData[p + 1] = Math.max(0, Math.min(255, g));
+      albedoData[p + 2] = Math.max(0, Math.min(255, b));
+      albedoData[p + 3] = 255;
+
+      const rough = Math.round(168 + (1 - h) * 74 + fbm2D(x * 0.03 + 4.2, y * 0.03 - 1.8, 2) * 28);
+      const roughClamped = Math.max(0, Math.min(255, rough));
+      roughnessData[p] = roughClamped;
+      roughnessData[p + 1] = roughClamped;
+      roughnessData[p + 2] = roughClamped;
+      roughnessData[p + 3] = 255;
+
+      const hx1 = texel(x + 1, y);
+      const hx0 = texel(x - 1, y);
+      const hy1 = texel(x, y + 1);
+      const hy0 = texel(x, y - 1);
+      const dx = (hx1 - hx0) * 4.2;
+      const dy = (hy1 - hy0) * 4.2;
+      const nx = -dx;
+      const ny = -dy;
+      const nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normalData[p] = Math.round((nx / len) * 127 + 128);
+      normalData[p + 1] = Math.round((ny / len) * 127 + 128);
+      normalData[p + 2] = Math.round((nz / len) * 127 + 128);
+      normalData[p + 3] = 255;
+    }
+  }
+
+  const albedo = new THREE.DataTexture(albedoData, size, size, THREE.RGBAFormat);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.needsUpdate = true;
+
+  const roughness = new THREE.DataTexture(roughnessData, size, size, THREE.RGBAFormat);
+  roughness.needsUpdate = true;
+
+  const normal = new THREE.DataTexture(normalData, size, size, THREE.RGBAFormat);
+  normal.needsUpdate = true;
+
+  return { albedo, roughness, normal };
+}
+
+function distanceToSegment2D(px, pz, ax, az, bx, bz) {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const abLenSq = abx * abx + abz * abz;
+  if (abLenSq <= 0.00001) return Math.hypot(px - ax, pz - az);
+  const t = clamp01((apx * abx + apz * abz) / abLenSq);
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  return Math.hypot(px - cx, pz - cz);
+}
+
+function baseHeightFromHills(x, z, mountains) {
   let h = 0;
   mountains.forEach((m) => {
     const dx = x - m.x;
@@ -16,6 +156,63 @@ function smoothHeight(x, z, mountains) {
   return h;
 }
 
+function olympusHeight(x, z, olympusMountain) {
+  if (!olympusMountain) return 0;
+  const dx = x - olympusMountain.center.x;
+  const dz = z - olympusMountain.center.z;
+  const d = Math.hypot(dx, dz);
+  if (d > olympusMountain.radius) return 0;
+
+  const t = 1 - d / olympusMountain.radius;
+  let h = olympusMountain.height * Math.pow(t, 1.2);
+
+  if (d < olympusMountain.calderaRadius) {
+    const ct = 1 - d / olympusMountain.calderaRadius;
+    h -= olympusMountain.calderaDepth * ct * ct;
+  }
+
+  const rimDelta = Math.abs(d - olympusMountain.rimRadius);
+  if (rimDelta < olympusMountain.calderaRadius * 0.75) {
+    const rt = 1 - rimDelta / (olympusMountain.calderaRadius * 0.75);
+    h += olympusMountain.rimHeight * rt * rt;
+  }
+  return h;
+}
+
+function caveCarveDepth(x, z, caveDefs) {
+  if (!caveDefs?.length) return 0;
+  let carved = 0;
+  caveDefs.forEach((cave) => {
+    const points = cave.path;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const d = distanceToSegment2D(x, z, a.x, a.z, b.x, b.z);
+      if (d >= cave.radius) continue;
+      const t = 1 - d / cave.radius;
+      const segmentDepth = cave.depth * Math.pow(t, 3.2);
+      if (segmentDepth > carved) carved = segmentDepth;
+    }
+  });
+  return carved;
+}
+
+function terrainHeight(x, z, layout) {
+  const hills = baseHeightFromHills(x, z, layout.mountains);
+  const olympus = olympusHeight(x, z, layout.olympusMountain);
+  let carved = caveCarveDepth(x, z, layout.mountainCaves);
+  if (layout.olympusMountain) {
+    const dx = x - layout.olympusMountain.center.x;
+    const dz = z - layout.olympusMountain.center.z;
+    const d = Math.hypot(dx, dz);
+    const protectInner = layout.olympusMountain.calderaRadius + 7;
+    const protectOuter = layout.olympusMountain.calderaRadius + 18;
+    const summitProtect = clamp01((d - protectInner) / Math.max(0.0001, protectOuter - protectInner));
+    carved *= summitProtect;
+  }
+  return hills + olympus - carved;
+}
+
 // Pattern: Facade
 // Motivo: ofrecer una API simple sobre detalles de Three.js.
 // Beneficio: los sistemas de juego no dependen de la complejidad del render.
@@ -24,12 +221,14 @@ export class WorldScene {
     this.canvas = canvas;
     this.factory = new EntityFactory();
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xb95f31);
+    this.scene.background = new THREE.Color(0xc46c3c);
+    this.scene.fog = new THREE.Fog(0xc46c3c, 60, 320);
 
-    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 350);
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 520);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.ground = null;
     this.rover = null;
@@ -38,31 +237,67 @@ export class WorldScene {
     this.pickups = [];
     this.rocks = [];
     this.stations = [];
+    this.caveShells = [];
+    this.scenicMarkers = [];
     this.roverYaw = 0;
+    this.tmpForward = new THREE.Vector3();
+    this.tmpRight = new THREE.Vector3();
+    this.tmpUp = new THREE.Vector3();
+    this.tmpLookAt = new THREE.Vector3();
+    this.tmpCamAnchor = new THREE.Vector3();
+    this.tmpCamDesired = new THREE.Vector3();
+    this.tmpCamResolved = new THREE.Vector3();
+    this.tmpCamPoint = new THREE.Vector3();
+    this.tmpCamDir = new THREE.Vector3();
 
     this.setupLights();
     this.setupTerrain();
     this.setupEntities();
+    this.setupMountainLandmarks();
     this.resize();
   }
 
   setupLights() {
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const dir = new THREE.DirectionalLight(0xfff4df, 1);
-    dir.position.set(30, 45, 10);
-    this.scene.add(dir);
+    this.scene.add(new THREE.HemisphereLight(0xffd8bf, 0x3b2520, 0.48));
+    const key = new THREE.DirectionalLight(0xffdeb8, 1.2);
+    key.position.set(30, 45, 10);
+    this.scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xff8f5d, 0.28);
+    fill.position.set(-18, 12, -15);
+    this.scene.add(fill);
   }
 
   setupTerrain() {
-    const geometry = new THREE.PlaneGeometry(130, 130, 64, 64);
+    const geometry = new THREE.PlaneGeometry(240, 240, 180, 180);
     const pos = geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const y = pos.getY(i);
-      pos.setZ(i, smoothHeight(x, y, mapLayout.mountains));
+      // PlaneGeometry se rota -90deg en X, por lo que el eje Z mundo
+      // corresponde a -Y local del plano.
+      pos.setZ(i, terrainHeight(x, -y, mapLayout));
     }
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({ color: 0xbd6a3b, roughness: 1 });
+
+    const maps = createMarsGroundMaps(1024);
+    const anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy?.() ?? 1);
+    [maps.albedo, maps.roughness, maps.normal].forEach((t) => {
+      t.wrapS = THREE.ClampToEdgeWrapping;
+      t.wrapT = THREE.ClampToEdgeWrapping;
+      t.repeat.set(1, 1);
+      t.anisotropy = anisotropy;
+    });
+
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: maps.albedo,
+      normalMap: maps.normal,
+      roughnessMap: maps.roughness,
+      roughness: 1,
+      metalness: 0.03,
+      normalScale: new THREE.Vector2(2.25, 2.25),
+    });
     this.ground = new THREE.Mesh(geometry, material);
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
@@ -94,6 +329,103 @@ export class WorldScene {
     });
   }
 
+  setupMountainLandmarks() {
+    const summit = mapLayout.olympusMountain?.center;
+    if (summit) {
+      const summitRing = new THREE.Mesh(
+        new THREE.TorusGeometry(4.8, 0.35, 14, 48),
+        new THREE.MeshStandardMaterial({ color: 0xffd28e, emissive: 0x3c1f00, roughness: 0.68 })
+      );
+      summitRing.rotation.x = Math.PI / 2;
+      this.setObjectXZ(summitRing, summit.x, summit.z, 1.2);
+      this.scene.add(summitRing);
+      this.scenicMarkers.push(summitRing);
+
+      const beacon = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.6, 0.9, 5.6, 16),
+        new THREE.MeshStandardMaterial({ color: 0xf0c78f, emissive: 0x241000, roughness: 0.5 })
+      );
+      this.setObjectXZ(beacon, summit.x, summit.z, 4.1);
+      this.scene.add(beacon);
+      this.scenicMarkers.push(beacon);
+    }
+
+    mapLayout.mountainCaves?.forEach((cave) => {
+      const floorPath3 = cave.path.map((p) => new THREE.Vector3(p.x, this.getHeightAt(p.x, p.z) + 0.55, p.z));
+      if (floorPath3.length < 2) return;
+
+      const tunnelPath3 = cave.path.slice(1).map((p) => new THREE.Vector3(p.x, this.getHeightAt(p.x, p.z) + cave.radius * 1.55, p.z));
+      if (tunnelPath3.length >= 2) {
+        const tunnelCurve = new THREE.CatmullRomCurve3(tunnelPath3);
+        const outerShell = new THREE.Mesh(
+          new THREE.TubeGeometry(tunnelCurve, 92, cave.radius * 1.28, 24, false),
+          new THREE.MeshStandardMaterial({ color: 0x5a3b2d, roughness: 0.94, metalness: 0.02 })
+        );
+        this.scene.add(outerShell);
+        this.caveShells.push(outerShell);
+
+        const innerTunnel = new THREE.Mesh(
+          new THREE.TubeGeometry(tunnelCurve, 92, cave.radius * 1.02, 24, false),
+          new THREE.MeshStandardMaterial({
+            color: 0x251913,
+            roughness: 0.98,
+            metalness: 0,
+            side: THREE.BackSide,
+          })
+        );
+        this.scene.add(innerTunnel);
+        this.caveShells.push(innerTunnel);
+      }
+
+      const floorCurve = new THREE.CatmullRomCurve3(floorPath3);
+      const tunnelFloor = new THREE.Mesh(
+        new THREE.TubeGeometry(floorCurve, 90, cave.radius * 0.74, 14, false),
+        new THREE.MeshStandardMaterial({ color: 0x6a4a39, roughness: 0.98, metalness: 0 })
+      );
+      tunnelFloor.scale.y = 0.26;
+      this.scene.add(tunnelFloor);
+      this.caveShells.push(tunnelFloor);
+
+      const entrance = cave.path[0];
+      const next = cave.path[1] ?? entrance;
+      const dirX = next.x - entrance.x;
+      const dirZ = next.z - entrance.z;
+      const entranceYaw = Math.atan2(dirX, dirZ);
+
+      const mouthShell = new THREE.Mesh(
+        new THREE.SphereGeometry(cave.radius * 1.95, 26, 18, 0, Math.PI * 2, 0, Math.PI * 0.62),
+        new THREE.MeshStandardMaterial({ color: 0x6d4a37, roughness: 0.95, metalness: 0.01 })
+      );
+      mouthShell.rotation.y = entranceYaw;
+      this.setObjectXZ(mouthShell, entrance.x, entrance.z, cave.radius * 0.12);
+      this.scene.add(mouthShell);
+      this.caveShells.push(mouthShell);
+
+      const arch = new THREE.Mesh(
+        new THREE.TorusGeometry(cave.radius * 1.16, 0.58, 14, 30),
+        new THREE.MeshStandardMaterial({ color: 0x7b5842, roughness: 0.88 })
+      );
+      arch.rotation.set(Math.PI / 2, entranceYaw, 0);
+      this.setObjectXZ(arch, entrance.x, entrance.z, cave.radius * 0.95);
+      this.scene.add(arch);
+      this.caveShells.push(arch);
+
+      const mouthShadow = new THREE.Mesh(
+        new THREE.CircleGeometry(cave.radius * 0.94, 28),
+        new THREE.MeshBasicMaterial({ color: 0x110806, transparent: true, opacity: 0.92 })
+      );
+      mouthShadow.rotation.x = -Math.PI / 2;
+      this.setObjectXZ(mouthShadow, entrance.x + Math.sin(entranceYaw) * 1.2, entrance.z + Math.cos(entranceYaw) * 1.2, 0.32);
+      this.scene.add(mouthShadow);
+      this.caveShells.push(mouthShadow);
+
+      const guideLight = new THREE.PointLight(0xffb878, 1.35, 18, 2);
+      guideLight.position.set(entrance.x, this.getHeightAt(entrance.x, entrance.z) + cave.radius * 1.2, entrance.z);
+      this.scene.add(guideLight);
+      this.caveShells.push(guideLight);
+    });
+  }
+
   setPickups(pickups) {
     this.pickups.forEach((p) => this.scene.remove(p.mesh));
     this.pickups = pickups.map((p) => {
@@ -116,7 +448,89 @@ export class WorldScene {
   }
 
   getHeightAt(x, z) {
-    return smoothHeight(x, z, mapLayout.mountains);
+    return terrainHeight(x, z, mapLayout);
+  }
+
+  sampleRoverSurface(x, z, yaw) {
+    const tiltHalfLength = 1.1;
+    const tiltHalfWidth = 0.8;
+    const supportHalfLength = 1.55;
+    const supportHalfWidth = 1.15;
+    const contactLocalY = 0.74;
+
+    this.tmpForward.set(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
+    this.tmpRight.set(this.tmpForward.z, 0, -this.tmpForward.x).normalize();
+
+    const centerH = this.getHeightAt(x, z);
+    const frontH = this.getHeightAt(x + this.tmpForward.x * tiltHalfLength, z + this.tmpForward.z * tiltHalfLength);
+    const backH = this.getHeightAt(x - this.tmpForward.x * tiltHalfLength, z - this.tmpForward.z * tiltHalfLength);
+    const rightH = this.getHeightAt(x + this.tmpRight.x * tiltHalfWidth, z + this.tmpRight.z * tiltHalfWidth);
+    const leftH = this.getHeightAt(x - this.tmpRight.x * tiltHalfWidth, z - this.tmpRight.z * tiltHalfWidth);
+
+    let maxContactH = -Infinity;
+    let minContactH = Infinity;
+    const roughnessSteps = 12;
+    for (let iz = -roughnessSteps; iz <= roughnessSteps; iz++) {
+      const tz = iz / roughnessSteps;
+      for (let ix = -roughnessSteps; ix <= roughnessSteps; ix++) {
+        const tx = ix / roughnessSteps;
+        const sx = x + this.tmpForward.x * (tz * supportHalfLength) + this.tmpRight.x * (tx * supportHalfWidth);
+        const sz = z + this.tmpForward.z * (tz * supportHalfLength) + this.tmpRight.z * (tx * supportHalfWidth);
+        const h = this.getHeightAt(sx, sz);
+        if (h > maxContactH) maxContactH = h;
+        if (h < minContactH) minContactH = h;
+      }
+    }
+
+    const tangentF = new THREE.Vector3(this.tmpForward.x * 2 * tiltHalfLength, frontH - backH, this.tmpForward.z * 2 * tiltHalfLength);
+    const tangentR = new THREE.Vector3(this.tmpRight.x * 2 * tiltHalfWidth, rightH - leftH, this.tmpRight.z * 2 * tiltHalfWidth);
+    this.tmpUp.crossVectors(tangentR, tangentF).normalize();
+    if (this.tmpUp.y < 0) this.tmpUp.multiplyScalar(-1);
+
+    // Reproyectamos ejes sobre el plano del terreno para calcular
+    // la altura minima del origen que evita interpenetracion.
+    const normalDot = this.tmpForward.dot(this.tmpUp);
+    this.tmpForward.addScaledVector(this.tmpUp, -normalDot).normalize();
+    this.tmpRight.crossVectors(this.tmpUp, this.tmpForward).normalize();
+
+    let requiredOriginY = -Infinity;
+    const fitSteps = 12;
+    for (let iz = -fitSteps; iz <= fitSteps; iz++) {
+      const tz = iz / fitSteps;
+      for (let ix = -fitSteps; ix <= fitSteps; ix++) {
+        const tx = ix / fitSteps;
+        const localZ = tz * supportHalfLength;
+        const localX = tx * supportHalfWidth;
+        const sx = x + this.tmpUp.x * contactLocalY + this.tmpForward.x * localZ + this.tmpRight.x * localX;
+        const sz = z + this.tmpUp.z * contactLocalY + this.tmpForward.z * localZ + this.tmpRight.z * localX;
+        const groundY = this.getHeightAt(sx, sz);
+        const localYOffset = this.tmpUp.y * contactLocalY + this.tmpForward.y * localZ + this.tmpRight.y * localX;
+        const pointRequiredY = groundY - localYOffset;
+        if (pointRequiredY > requiredOriginY) requiredOriginY = pointRequiredY;
+      }
+    }
+
+    const roughnessBoost = Math.min(0.22, Math.max(0, maxContactH - minContactH) * 0.05);
+    return { normal: this.tmpUp, y: requiredOriginY + roughnessBoost };
+  }
+
+  getTerrainRegion(x, z) {
+    const olympus = mapLayout.olympusMountain;
+    if (!olympus) return "llanura";
+
+    const d = Math.hypot(x - olympus.center.x, z - olympus.center.z);
+    const inCave = (mapLayout.mountainCaves ?? []).some((cave) => {
+      for (let i = 0; i < cave.path.length - 1; i++) {
+        const a = cave.path[i];
+        const b = cave.path[i + 1];
+        if (distanceToSegment2D(x, z, a.x, a.z, b.x, b.z) <= cave.radius * 0.82) return true;
+      }
+      return false;
+    });
+    if (inCave) return "cueva";
+    if (d <= olympus.calderaRadius * 0.92) return "cima";
+    if (d <= olympus.radius * 0.94) return "ladera";
+    return "llanura";
   }
 
   getRoverPosition() {
@@ -124,19 +538,90 @@ export class WorldScene {
   }
 
   setRoverTransform(x, z, yaw) {
-    // El modelo apunta visualmente hacia -Z; compensamos para alinearlo con
-    // el heading fisico del sistema de movimiento (+Z cuando yaw=0).
+    // Alineamos rover segun su huella completa para evitar interpenetracion en laderas.
     this.roverYaw = yaw;
-    this.rover.rotation.y = yaw + Math.PI;
-    this.setObjectXZ(this.rover, x, z, 0.5);
+    const sample = this.sampleRoverSurface(x, z, yaw);
+    const groundNormal = sample.normal;
+    this.rover.position.set(x, sample.y, z);
+
+    this.tmpForward.set(Math.sin(yaw), 0, Math.cos(yaw));
+    const normalDot = this.tmpForward.dot(groundNormal);
+    this.tmpForward.addScaledVector(groundNormal, -normalDot);
+    if (this.tmpForward.lengthSq() < 0.0001) {
+      this.tmpForward.set(0, 0, 1);
+    }
+    this.tmpForward.normalize();
+
+    this.rover.up.copy(groundNormal);
+    this.tmpLookAt.copy(this.rover.position).add(this.tmpForward);
+    this.rover.lookAt(this.tmpLookAt);
+  }
+
+  resolveCameraCollision(anchor, desired, groundClearance, maxDistance = Infinity) {
+    this.tmpCamResolved.copy(desired);
+    const samples = 28;
+    let hitT = 1;
+    for (let i = 1; i <= samples; i++) {
+      const t = i / samples;
+      this.tmpCamPoint.lerpVectors(anchor, desired, t);
+      const floorY = this.getHeightAt(this.tmpCamPoint.x, this.tmpCamPoint.z) + groundClearance;
+      if (this.tmpCamPoint.y < floorY) {
+        hitT = t;
+        break;
+      }
+    }
+
+    if (hitT < 1) {
+      const safeT = Math.max(0.2, hitT - 0.08);
+      this.tmpCamResolved.lerpVectors(anchor, desired, safeT);
+    }
+
+    const minY = this.getHeightAt(this.tmpCamResolved.x, this.tmpCamResolved.z) + groundClearance;
+    if (this.tmpCamResolved.y < minY) this.tmpCamResolved.y = minY;
+
+    if (Number.isFinite(maxDistance)) {
+      this.tmpCamDir.subVectors(this.tmpCamResolved, anchor);
+      const d = this.tmpCamDir.length();
+      if (d > maxDistance) {
+        this.tmpCamDir.multiplyScalar(maxDistance / Math.max(0.0001, d));
+        this.tmpCamResolved.copy(anchor).add(this.tmpCamDir);
+      }
+    }
   }
 
   updateCamera() {
     const p = this.rover.position;
     const yaw = this.roverYaw;
-    const back = new THREE.Vector3(Math.sin(yaw) * -11, 6.5, Math.cos(yaw) * -11);
-    this.camera.position.set(p.x + back.x, p.y + back.y, p.z + back.z);
-    this.camera.lookAt(p.x, p.y + 1, p.z);
+    const region = this.getTerrainRegion(p.x, p.z);
+    const inCave = region === "cueva";
+
+    const followDistance = inCave ? 3.4 : 11;
+    const followHeight = inCave ? 2.8 : 6.8;
+    const anchorHeight = inCave ? 1.3 : 1.6;
+    const lookHeight = inCave ? 1.15 : 1;
+    const sideOffset = inCave ? 0.42 : 0;
+    const targetFov = inCave ? 72 : 60;
+
+    const roverGroundY = this.getHeightAt(p.x, p.z);
+    const anchorY = Math.max(p.y + anchorHeight, roverGroundY + (inCave ? 1.1 : 1.45));
+    this.tmpCamAnchor.set(p.x, anchorY, p.z);
+    this.tmpCamDesired.set(
+      p.x + Math.sin(yaw) * -followDistance + Math.cos(yaw) * sideOffset,
+      p.y + followHeight,
+      p.z + Math.cos(yaw) * -followDistance - Math.sin(yaw) * sideOffset
+    );
+
+    this.resolveCameraCollision(this.tmpCamAnchor, this.tmpCamDesired, inCave ? 0.18 : 0.3, inCave ? 4 : Infinity);
+    this.camera.position.copy(this.tmpCamResolved);
+
+    this.tmpLookAt.set(p.x, p.y + lookHeight, p.z);
+    this.camera.lookAt(this.tmpLookAt);
+
+    const nextFov = this.camera.fov + (targetFov - this.camera.fov) * 0.12;
+    if (Math.abs(nextFov - this.camera.fov) > 0.01) {
+      this.camera.fov = nextFov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   resize() {

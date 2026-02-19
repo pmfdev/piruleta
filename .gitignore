@@ -11,6 +11,11 @@ build/
 .vite/
 coverage/
 vite.log
+tmp/
+vite-dev.err.log
+web-dev*.log
+web-dev*.out.log
+web-dev*.err.log
 
 # Test artifacts
 output/
