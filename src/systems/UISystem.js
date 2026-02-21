@@ -10,6 +10,7 @@ export class UISystem {
     this.missionText = document.getElementById("mission-text");
     this.timeText = document.getElementById("time-text");
     this.hintText = document.getElementById("hint-text");
+    this.phaseBanner = document.getElementById("phase-banner");
     this.menu = document.getElementById("menu");
     this.result = document.getElementById("result");
     this.resultTitle = document.getElementById("result-title");
@@ -43,10 +44,24 @@ export class UISystem {
     this.hintText.textContent = text;
   }
 
+  showPhaseBanner(text) {
+    if (!this.phaseBanner) return;
+    this.phaseBanner.classList.remove("hidden");
+    this.phaseBanner.style.animation = "none";
+    void this.phaseBanner.offsetHeight;
+    this.phaseBanner.style.animation = "";
+    this.phaseBanner.textContent = text;
+    clearTimeout(this.phaseBanner._hideTimer);
+    this.phaseBanner._hideTimer = setTimeout(() => {
+      this.phaseBanner.classList.add("hidden");
+    }, 2200);
+  }
+
   update(state) {
     this.oxygenFill.style.width = pct(state.oxygen);
     this.batteryFill.style.width = pct(state.battery);
     this.missionText.textContent = state.missionText;
-    this.timeText.textContent = `Tiempo: ${state.timeLeft}s`;
+    this.timeText.textContent =
+      typeof state.timeLeft === "number" ? `Tiempo: ${state.timeLeft}s` : `Tiempo: ${state.timeLeft}`;
   }
 }

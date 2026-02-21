@@ -217,6 +217,7 @@ export class WorldScene {
     this.rover = null;
     this.piruleta = null;
     this.camp = null;
+    this.returnShip = null;
     this.pickups = [];
     this.rocks = [];
     this.stations = [];
@@ -309,9 +310,15 @@ export class WorldScene {
     this.rover = this.factory.createRover();
     this.piruleta = this.factory.createPiruleta();
     this.camp = this.factory.createCamp();
+    this.returnShip = this.factory.createReturnShip();
     this.piruleta.castShadow = true;
     this.piruleta.receiveShadow = true;
     this.camp.traverse?.((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+    });
+    this.returnShip.traverse?.((node) => {
       if (!node.isMesh) return;
       node.castShadow = true;
       node.receiveShadow = true;
@@ -320,7 +327,8 @@ export class WorldScene {
     this.setObjectXZ(this.rover, mapLayout.spawn.x, mapLayout.spawn.z, 0);
     this.setObjectXZ(this.piruleta, mapLayout.piruleta.x, mapLayout.piruleta.z, 0.4);
     this.setObjectXZ(this.camp, mapLayout.camp.x, mapLayout.camp.z, 0);
-    this.scene.add(this.rover, this.piruleta, this.camp);
+    this.setObjectXZ(this.returnShip, mapLayout.returnShip.x, mapLayout.returnShip.z, 0);
+    this.scene.add(this.rover, this.piruleta, this.camp, this.returnShip);
 
     mapLayout.stations.forEach((s) => {
       const mesh = this.factory.createStation();
@@ -390,6 +398,13 @@ export class WorldScene {
 
   getHeightAt(x, z) {
     return terrainHeight(x, z, mapLayout);
+  }
+
+  addPickup(pickup) {
+    const mesh = this.factory.createPickup(pickup.type);
+    this.setObjectXZ(mesh, pickup.x, pickup.z, 1);
+    this.scene.add(mesh);
+    this.pickups.push({ ...pickup, mesh });
   }
 
   sampleRoverSurface(x, z, yaw) {
@@ -478,6 +493,18 @@ export class WorldScene {
 
   getRoverPosition() {
     return this.rover.position;
+  }
+
+  getPiruletaPosition() {
+    return this.piruleta.position;
+  }
+
+  setPiruletaTransform(x, z, extraYOffset = 0) {
+    this.piruleta.position.set(x, this.getHeightAt(x, z) + 0.4 + extraYOffset, z);
+  }
+
+  getReturnShipPosition() {
+    return this.returnShip.position;
   }
 
   setRoverTransform(x, z, yaw) {

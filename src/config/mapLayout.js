@@ -5,6 +5,7 @@ export const mapLayout = {
   spawn: { x: -48, z: -42 },
   piruleta: { x: 44, z: 36 },
   camp: { x: 38, z: -34 },
+  returnShip: { x: -64, z: 58 },
   stations: [
     { x: -38, z: -36 },
     { x: 0, z: 4 },

@@ -102,6 +102,32 @@ export class EntityFactory {
     );
   }
 
+  createReturnShip() {
+    const group = new THREE.Group();
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.2, 2.8, 2.4, 18),
+      new THREE.MeshStandardMaterial({ color: 0xd8d8dc, roughness: 0.42, metalness: 0.35 })
+    );
+    base.position.y = 1.2;
+    group.add(base);
+
+    const cabin = new THREE.Mesh(
+      new THREE.ConeGeometry(1.55, 3.4, 18),
+      new THREE.MeshStandardMaterial({ color: 0xb8beca, roughness: 0.35, metalness: 0.42 })
+    );
+    cabin.position.y = 4.05;
+    group.add(cabin);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(2.8, 0.2, 10, 28),
+      new THREE.MeshStandardMaterial({ color: 0x8fe0ff, emissive: 0x0e3044, roughness: 0.3 })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.35;
+    group.add(ring);
+    return group;
+  }
+
   createRock(radius) {
     return new THREE.Mesh(
       new THREE.DodecahedronGeometry(radius, 0),
