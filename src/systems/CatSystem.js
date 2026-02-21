@@ -14,6 +14,7 @@ export class CatSystem {
     this.orbit = 0;
     this.walkPhase = 0;
     this.finalControl = false;
+    this.motionIntensity = 0;
     this.world.setPiruletaTransform(this.x, this.z);
   }
 
@@ -33,6 +34,7 @@ export class CatSystem {
       this.world.setPiruletaTransform(mapLayout.piruleta.x, mapLayout.piruleta.z, idleBob);
       this.x = mapLayout.piruleta.x;
       this.z = mapLayout.piruleta.z;
+      this.motionIntensity = 0;
       return;
     }
 
@@ -44,6 +46,7 @@ export class CatSystem {
       this.z = mapLayout.piruleta.z + Math.sin(this.orbit * 0.9) * (radius * 0.65);
       const walkBob = Math.sin(this.walkPhase) * 0.075;
       this.world.setPiruletaTransform(this.x, this.z, walkBob);
+      this.motionIntensity = 0.65;
       return;
     }
 
@@ -61,10 +64,19 @@ export class CatSystem {
       }
       const finalBob = Math.sin(this.walkPhase) * (len > 0.01 ? 0.09 : 0.03);
       this.world.setPiruletaTransform(this.x, this.z, finalBob);
+      this.motionIntensity = len;
     }
   }
 
   getPosition() {
     return { x: this.x, z: this.z };
+  }
+
+  getMotionIntensity() {
+    return this.motionIntensity;
+  }
+
+  getMode() {
+    return this.mode;
   }
 }

@@ -3,8 +3,13 @@
 // Beneficio: mover puntos del mapa sin tocar logica de gameplay.
 export const mapLayout = {
   spawn: { x: -48, z: -42 },
-  piruleta: { x: 44, z: 36 },
-  camp: { x: 38, z: -34 },
+  piruleta: { x: -44, z: -42 },
+  camp: { x: 52, z: 52 },
+  moduleDeliveryPoints: {
+    oxygen: { x: 47, z: 53 },
+    food: { x: 52, z: 57 },
+    material: { x: 57, z: 53 },
+  },
   returnShip: { x: -64, z: 58 },
   stations: [
     { x: -38, z: -36 },
@@ -17,8 +22,9 @@ export const mapLayout = {
   ],
   olympusMountain: {
     center: { x: 52, z: 52 },
-    radius: 46,
-    height: 30,
+    radius: 58,
+    height: 42,
+    summitFlatRadius: 30,
     calderaRadius: 11,
     calderaDepth: 7.5,
     rimRadius: 15,

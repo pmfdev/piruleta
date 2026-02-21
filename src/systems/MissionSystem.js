@@ -17,6 +17,13 @@ function clamp01Pct(v) {
   return Math.max(0, Math.min(100, v));
 }
 
+function resourceLabel(type) {
+  if (type === "oxygen") return "botella de oxigeno";
+  if (type === "material") return "componentes de mantenimiento";
+  if (type === "food") return "comida";
+  return type;
+}
+
 export class MissionSystem {
   constructor(world, eventBus) {
     this.world = world;
@@ -26,9 +33,9 @@ export class MissionSystem {
     this.stableTimer = 0;
     this.catOutdoor = false;
     this.systems = {
-      oxygen: 58,
-      habitat: 44,
-      food: 50,
+      oxygen: 52,
+      systemHealth: 58,
+      food: 48,
     };
     this.pickupCounters = { oxygen: 1000, material: 2000, food: 3000 };
     this.refillPools = {
@@ -48,8 +55,11 @@ export class MissionSystem {
   }
 
   isStableNow() {
-    const t = gameConfig.systemStableThreshold;
-    return this.systems.oxygen >= t && this.systems.habitat >= t && this.systems.food >= t;
+    return (
+      this.systems.oxygen >= gameConfig.oxygenStableThreshold &&
+      this.systems.systemHealth >= gameConfig.maintenanceSafeThreshold &&
+      this.systems.food >= gameConfig.systemStableThreshold
+    );
   }
 
   shouldCatBeOutdoor() {
@@ -59,7 +69,7 @@ export class MissionSystem {
   getSystemState() {
     return {
       oxygen: Number(this.systems.oxygen.toFixed(2)),
-      habitat: Number(this.systems.habitat.toFixed(2)),
+      systemHealth: Number(this.systems.systemHealth.toFixed(2)),
       food: Number(this.systems.food.toFixed(2)),
       stableTimer: Number(this.stableTimer.toFixed(2)),
       phase: this.phase,
@@ -81,10 +91,20 @@ export class MissionSystem {
 
   update(dt) {
     if (!this.isFinalPhase()) {
+      if (gameConfig.freezeModuleNeedsForDesign) return;
       const decay = this.phase === PHASES.SURVIVAL ? gameConfig.systemDecaySurvival : gameConfig.systemDecayStability;
-      this.systems.oxygen = clamp01Pct(this.systems.oxygen - decay.oxygen * dt);
-      this.systems.habitat = clamp01Pct(this.systems.habitat - decay.habitat * dt);
+      this.systems.systemHealth = clamp01Pct(this.systems.systemHealth - decay.maintenance * dt);
       this.systems.food = clamp01Pct(this.systems.food - decay.food * dt);
+
+      // El oxigeno solo deja de caer cuando alcanza estabilidad y el mantenimiento acompana.
+      const oxygenStable =
+        this.systems.oxygen >= gameConfig.oxygenStableThreshold &&
+        this.systems.systemHealth >= gameConfig.maintenanceSafeThreshold;
+      if (!oxygenStable) {
+        // Si mantenimiento cae, el oxigeno empeora mas rapido.
+        const maintenancePenalty = Math.max(0, (gameConfig.maintenanceSafeThreshold - this.systems.systemHealth) * 0.02);
+        this.systems.oxygen = clamp01Pct(this.systems.oxygen - (decay.oxygen + maintenancePenalty) * dt);
+      }
     }
 
     const stable = this.isStableNow();
@@ -113,13 +133,13 @@ export class MissionSystem {
   }
 
   getDeliveryPoint(type) {
-    return type === "oxygen" ? mapLayout.piruleta : mapLayout.camp;
+    return mapLayout.moduleDeliveryPoints?.[type] ?? mapLayout.camp;
   }
 
   boostSystemForType(type) {
     const boost = gameConfig.systemBoostByDelivery[type] ?? 16;
     if (type === "oxygen") this.systems.oxygen = clamp01Pct(this.systems.oxygen + boost);
-    if (type === "material") this.systems.habitat = clamp01Pct(this.systems.habitat + boost);
+    if (type === "material") this.systems.systemHealth = clamp01Pct(this.systems.systemHealth + boost);
     if (type === "food") this.systems.food = clamp01Pct(this.systems.food + boost);
   }
 
@@ -139,18 +159,18 @@ export class MissionSystem {
       if (!pick) return { hint: "Busca recursos para estabilizar sistemas" };
       this.heldItemType = pick.type;
       this.world.removePickupById(pick.id);
-      return { hint: `Recogido: ${pick.type}` };
+      return { hint: `Recogido: ${resourceLabel(pick.type)}` };
     }
 
     const deliveryPoint = this.getDeliveryPoint(this.heldItemType);
     if (distance2D(roverPos, deliveryPoint) > interactionDistance) {
-      return { hint: "Lleva el recurso al sistema de destino" };
+      return { hint: "Lleva el recurso al punto de entrega exterior del modulo" };
     }
     const deliveredType = this.heldItemType;
     this.heldItemType = null;
     this.boostSystemForType(deliveredType);
     this.spawnReplacementPickup(deliveredType);
     this.eventBus.emit("item_delivered", { type: deliveredType });
-    return { hint: `Sistema reforzado con ${deliveredType}` };
+    return { hint: `Sistema reforzado con ${resourceLabel(deliveredType)}` };
   }
 }

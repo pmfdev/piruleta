@@ -56,9 +56,27 @@ export class RoverSystem {
     const finalX = this.x + (nx - this.x) * slopePenalty;
     const finalZ = this.z + (nz - this.z) * slopePenalty;
 
-    if (!this.hitsRock(finalX, finalZ)) {
-      this.x = clamp(finalX, -gameConfig.mapLimit, gameConfig.mapLimit);
-      this.z = clamp(finalZ, -gameConfig.mapLimit, gameConfig.mapLimit);
+    // Movimiento por ejes para permitir deslizamiento contra obstaculos.
+    const targetX = clamp(finalX, -gameConfig.mapLimit, gameConfig.mapLimit);
+    const targetZ = clamp(finalZ, -gameConfig.mapLimit, gameConfig.mapLimit);
+
+    const prevX = this.x;
+    const prevZ = this.z;
+
+    if (!this.hitsRock(targetX, this.z)) {
+      this.x = targetX;
+      this.world.setRoverTransform(this.x, this.z, this.yaw);
+      if (this.world.isRoverCollidingWithModule()) {
+        this.x = prevX;
+      }
+    }
+
+    if (!this.hitsRock(this.x, targetZ)) {
+      this.z = targetZ;
+      this.world.setRoverTransform(this.x, this.z, this.yaw);
+      if (this.world.isRoverCollidingWithModule()) {
+        this.z = prevZ;
+      }
     }
     this.world.setRoverTransform(this.x, this.z, this.yaw);
   }

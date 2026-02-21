@@ -37,7 +37,7 @@ let piruleta = null;
 let mission = null;
 let cat = null;
 let totalTime = 0;
-let hint = "Recolecta recursos para estabilizar sistemas";
+let hint = "Recolecta oxigeno, comida y componentes para sostener el modulo";
 let lastAction = false;
 
 function updateViewButtonLabel() {
@@ -56,7 +56,7 @@ function resetGame() {
   mission = new MissionSystem(world, eventBus);
   cat = new CatSystem(world);
   totalTime = gameConfig.maxMissionTimeSec;
-  hint = "Mantener con vida a Piruleta";
+  hint = "Mantener operativo el modulo para que Piruleta sobreviva";
   lastAction = false;
 }
 
@@ -135,18 +135,33 @@ function update(dt) {
   }
   lastAction = actionPressed;
 
-  world.applyCameraLookInput(input.getLookVector(), dt);
-  piruleta.update(dt, mission.isStableNow());
-
   const systems = mission.getSystemState();
+  world.applyCameraLookInput(input.getLookVector(), dt);
+  piruleta.update(dt, systems);
+  const catMode = cat.getMode();
+  const catMotion = cat.getMotionIntensity();
+  const catAnim = "walk";
+  let catPosture = "stable";
+  if (systems.oxygen < 30 || systems.systemHealth < 35) catPosture = "critical";
+  else if (systems.oxygen >= 82 && systems.systemHealth >= 78 && systems.food >= 78) catPosture = "optimal";
+  world.setPiruletaAnimation(catAnim, catMotion, catPosture);
+  world.updatePiruletaAnimation(dt);
+
   const phaseText = getMissionText(phase, systems);
   const stableMark = mission.isStableNow() ? "estable" : "fragil";
   const carrying = mission.heldItemType ?? "ninguno";
   const chargeText = nearStation ? "cerca de estacion" : "sin estacion cercana";
 
   ui.setHint(
-    `O2 ${systems.oxygen.toFixed(0)} | HAB ${systems.habitat.toFixed(0)} | COM ${systems.food.toFixed(0)} | Estado ${stableMark} | Carga ${chargeText} | Item ${carrying} | Piruleta ${piruleta.mood}`
+    `O2 ${systems.oxygen.toFixed(0)} | MNT ${systems.systemHealth.toFixed(0)} | COM ${systems.food.toFixed(0)} | Estado ${stableMark} | Carga ${chargeText} | Item ${carrying} | Piruleta ${piruleta.mood}`
   );
+  world.updateModuleHabitatVisual(dt, {
+    oxygen: systems.oxygen,
+    systemHealth: systems.systemHealth,
+    food: systems.food,
+    phase,
+    catOutdoor: mission.shouldCatBeOutdoor(),
+  });
   ui.update({
     oxygen: systems.oxygen,
     battery: battery.level,
@@ -213,13 +228,14 @@ window.render_game_to_text = () => {
     terrain_region: world.getTerrainRegion(roverPos.x, roverPos.z),
     systems: {
       oxygen: systems.oxygen,
-      habitat: systems.habitat,
+      system_health: systems.systemHealth,
       food: systems.food,
       carrying: systems.carrying,
       stable_timer: systems.stableTimer,
     },
     battery: { level: Number(battery.level.toFixed(2)), recharging: battery.recharging },
     pickups_visible: world.pickups.map((p) => ({ id: p.id, type: p.type, x: p.x, z: p.z })),
+    module_delivery_points: mapLayout.moduleDeliveryPoints,
     time_left: mission.isFinalPhase() ? null : Number(totalTime.toFixed(2)),
     ship: { x: Number(mapLayout.returnShip.x.toFixed(2)), z: Number(mapLayout.returnShip.z.toFixed(2)) },
     hint,

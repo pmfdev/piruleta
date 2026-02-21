@@ -2,6 +2,8 @@
 // Motivo: centralizar constantes de juego para evitar valores sueltos en sistemas.
 // Beneficio: balancear el juego editando una sola fuente de verdad.
 export const gameConfig = {
+  // Temporal de diseno: evita deterioro de sistemas mientras se trabaja en arte/escena.
+  freezeModuleNeedsForDesign: true,
   maxMissionTimeSec: 420,
   oxygenDrainPerSecOutsideCamp: 100 / 60,
   oxygenBottleBoost: 33.33,
@@ -17,23 +19,25 @@ export const gameConfig = {
   mapLimit: 110,
   // Nueva progresion por fases
   systemStableThreshold: 70,
+  oxygenStableThreshold: 76,
+  maintenanceSafeThreshold: 62,
   phase2UnlockStableSec: 26,
   catOutdoorStableSec: 34,
   finalMissionUnlockStableSec: 56,
   systemDecaySurvival: {
     oxygen: 1.35,
-    habitat: 0.74,
+    maintenance: 0.38,
     food: 0.56,
   },
   systemDecayStability: {
     oxygen: 0.5,
-    habitat: 0.34,
+    maintenance: 0.18,
     food: 0.28,
   },
   systemBoostByDelivery: {
-    oxygen: 26,
-    material: 20,
-    food: 22,
+    oxygen: 24,
+    material: 22,
+    food: 18,
   },
   catAutoWalkSpeed: 1.8,
   catPlayerWalkSpeed: 3.0,

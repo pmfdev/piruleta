@@ -2,12 +2,12 @@ export class PiruletaSystem {
   constructor() {
     this.campBuilt = false;
     this.mood = "inquieto";
-    this.calmTimer = 0;
   }
 
-  update(dt, stable) {
-    if (stable) this.calmTimer += dt;
-    else this.calmTimer = 0;
-    this.mood = this.calmTimer >= 8 ? "tranquilo" : "inquieto";
+  update(dt, systems) {
+    const food = systems?.food ?? 50;
+    if (food < 25) this.mood = "apatico";
+    else if (food < 55) this.mood = "inquieto";
+    else this.mood = "tranquilo";
   }
 }

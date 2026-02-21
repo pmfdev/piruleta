@@ -1,6 +1,12 @@
 import * as THREE from "three";
+import { gameConfig } from "../config/gameConfig.js";
 import { mapLayout } from "../config/mapLayout.js";
 import { EntityFactory } from "./EntityFactory.js";
+
+// Debug visual opcional del volumen de sombras para ajustar frustum sin tocar gameplay.
+const DEBUG_SHADOW_CAMERA = false;
+const DEBUG_MODULE_COLLIDERS = false;
+const SHOW_MODULE_DOOR_GUIDE = true;
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -241,6 +247,31 @@ export class WorldScene {
     this.roverVibePhase = 0;
     this.lastRoverPos = null;
     this.roverVisualState = { y: 0, pitch: 0, roll: 0 };
+    this.keyLight = null;
+    this.shadowCameraHelper = null;
+    this.moduleVisuals = null;
+    this.moduleVisualTime = 0;
+    this.moduleColliderHelpers = [];
+    this.moduleDomeHelper = null;
+    this.moduleDoorHelper = null;
+    this.moduleDoorGuideMeshes = [];
+    this.moduleColliderSignature = "";
+    this.roverCollisionHitbox = null;
+    this.roverCollisionBox = new THREE.Box3();
+    this.roverCollisionHelper = null;
+    this.moduleColliderParams = {
+      doorWidth: 5.2,
+      doorDepth: 1.6,
+      doorHeight: 2.4,
+      domePadding: 12.0,
+      doorLateralOffset: -4.5,
+    };
+    this.moduleCollisionShape = null;
+    this.moduleAutoFirstPersonTriggered = false;
+    this.piruletaAnimState = "idle";
+    this.piruletaAnimMotion = 0;
+    this.piruletaAnimTime = 0;
+    this.piruletaAnimPosture = "stable";
 
     this.setupLights();
     this.setupTerrain();
@@ -254,15 +285,26 @@ export class WorldScene {
     const key = new THREE.DirectionalLight(0xffdeb8, 1.2);
     key.position.set(30, 45, 10);
     key.castShadow = true;
+    // 2k mantiene buen detalle sin coste excesivo; subir a 4096 solo si el dispositivo aguanta fluido.
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = 180;
-    key.shadow.camera.left = -75;
-    key.shadow.camera.right = 75;
-    key.shadow.camera.top = 75;
-    key.shadow.camera.bottom = -75;
-    key.shadow.bias = -0.0002;
+    // Frustum mas cerrado sobre la zona jugable para reducir banding/acne en suelo.
+    key.shadow.camera.near = 6;
+    key.shadow.camera.far = 130;
+    key.shadow.camera.left = -58;
+    key.shadow.camera.right = 58;
+    key.shadow.camera.top = 58;
+    key.shadow.camera.bottom = -58;
+    // Bias negativo pequeno + normalBias atacan acne sin separar en exceso la sombra del objeto.
+    key.shadow.bias = -0.0005;
+    key.shadow.normalBias = 0.02;
+    key.shadow.camera.updateProjectionMatrix();
+    this.keyLight = key;
     this.scene.add(key);
+
+    if (DEBUG_SHADOW_CAMERA) {
+      this.shadowCameraHelper = new THREE.CameraHelper(key.shadow.camera);
+      this.scene.add(this.shadowCameraHelper);
+    }
 
     const fill = new THREE.DirectionalLight(0xff8f5d, 0.28);
     fill.position.set(-18, 12, -15);
@@ -308,11 +350,24 @@ export class WorldScene {
 
   setupEntities() {
     this.rover = this.factory.createRover();
+    this.rover.castShadow = true;
+    this.rover.receiveShadow = false;
+    this.rover.traverse?.((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      // Evitamos auto-sombra en el rover para eliminar acne en malla compleja del GLB.
+      node.receiveShadow = false;
+    });
     this.piruleta = this.factory.createPiruleta();
     this.camp = this.factory.createCamp();
     this.returnShip = this.factory.createReturnShip();
-    this.piruleta.castShadow = true;
-    this.piruleta.receiveShadow = true;
+    this.piruleta.castShadow = false;
+    this.piruleta.receiveShadow = false;
+    this.piruleta.traverse?.((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = false;
+      node.receiveShadow = false;
+    });
     this.camp.traverse?.((node) => {
       if (!node.isMesh) return;
       node.castShadow = true;
@@ -323,12 +378,16 @@ export class WorldScene {
       node.castShadow = true;
       node.receiveShadow = true;
     });
+    this.moduleVisuals = this.camp.userData.moduleVisuals ?? null;
 
     this.setObjectXZ(this.rover, mapLayout.spawn.x, mapLayout.spawn.z, 0);
     this.setObjectXZ(this.piruleta, mapLayout.piruleta.x, mapLayout.piruleta.z, 0.4);
-    this.setObjectXZ(this.camp, mapLayout.camp.x, mapLayout.camp.z, 0);
+    // Enterrado leve para que el modulo se lea asentado en el terreno.
+    this.setObjectXZ(this.camp, mapLayout.camp.x, mapLayout.camp.z, -0.5);
     this.setObjectXZ(this.returnShip, mapLayout.returnShip.x, mapLayout.returnShip.z, 0);
     this.scene.add(this.rover, this.piruleta, this.camp, this.returnShip);
+    this.setupRoverCollisionHitbox();
+    this.rebuildModuleColliders();
 
     mapLayout.stations.forEach((s) => {
       const mesh = this.factory.createStation();
@@ -349,6 +408,233 @@ export class WorldScene {
     });
 
     this.referenceCube = null;
+  }
+
+  setupRoverCollisionHitbox() {
+    if (!this.rover) return;
+    if (this.roverCollisionHitbox?.parent === this.rover) return;
+    const hitbox = new THREE.Mesh(
+      new THREE.BoxGeometry(2.2, 1.2, 3.0),
+      new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.18 })
+    );
+    hitbox.visible = DEBUG_MODULE_COLLIDERS;
+    hitbox.position.set(0, 1.18, 0.05);
+    this.rover.add(hitbox);
+    this.roverCollisionHitbox = hitbox;
+
+    if (DEBUG_MODULE_COLLIDERS) {
+      this.roverCollisionHelper = new THREE.Box3Helper(this.roverCollisionBox, 0x1aff8f);
+      this.scene.add(this.roverCollisionHelper);
+    }
+  }
+
+  clearModuleColliderHelpers() {
+    this.moduleColliderHelpers.forEach((h) => this.scene.remove(h));
+    this.moduleColliderHelpers = [];
+    if (this.moduleDomeHelper) {
+      this.scene.remove(this.moduleDomeHelper);
+      this.moduleDomeHelper = null;
+    }
+    if (this.moduleDoorHelper) {
+      this.scene.remove(this.moduleDoorHelper);
+      this.moduleDoorHelper = null;
+    }
+    this.moduleDoorGuideMeshes.forEach((m) => this.scene.remove(m));
+    this.moduleDoorGuideMeshes = [];
+  }
+
+  rebuildModuleColliders() {
+    if (!this.camp) return;
+    const moduleBox = new THREE.Box3().setFromObject(this.camp);
+    if (!Number.isFinite(moduleBox.min.x) || !Number.isFinite(moduleBox.max.x)) return;
+    const size = moduleBox.getSize(new THREE.Vector3());
+    const center = moduleBox.getCenter(new THREE.Vector3());
+
+    const xRadius = Math.max(0.5, size.x * 0.5 + this.moduleColliderParams.domePadding);
+    const zRadius = Math.max(0.5, size.z * 0.5 + this.moduleColliderParams.domePadding);
+    const yMin = moduleBox.min.y - 0.05;
+    const yMax = moduleBox.max.y - size.y * 0.05;
+    const yRadius = Math.max(0.5, (yMax - yMin) * 0.5);
+    const yCenter = yMin + yRadius;
+
+    const doorTarget = mapLayout.moduleDeliveryPoints?.oxygen ?? { x: center.x, z: center.z + 1 };
+    const doorDir = new THREE.Vector3(doorTarget.x - center.x, 0, doorTarget.z - center.z);
+    if (doorDir.lengthSq() < 0.0001) doorDir.set(0, 0, 1);
+    doorDir.normalize();
+    const doorRight = new THREE.Vector3(doorDir.z, 0, -doorDir.x).normalize();
+    const doorWidth = this.moduleColliderParams.doorWidth;
+    const doorDepth = this.moduleColliderParams.doorDepth;
+    const doorHeight = this.moduleColliderParams.doorHeight;
+    const doorLateralOffset = this.moduleColliderParams.doorLateralOffset ?? 0;
+    const doorBottom = yMin + 0.05;
+    const doorTop = Math.min(yMax - 0.05, doorBottom + doorHeight);
+    const doorEdgeRadius = 1 / Math.sqrt((doorDir.x * doorDir.x) / (xRadius * xRadius) + (doorDir.z * doorDir.z) / (zRadius * zRadius));
+
+    this.moduleCollisionShape = {
+      center: new THREE.Vector3(center.x, yCenter, center.z),
+      radii: new THREE.Vector3(xRadius, yRadius, zRadius),
+      yMin,
+      yMax,
+      door: {
+        dir: doorDir,
+        right: doorRight,
+        width: doorWidth,
+        depth: doorDepth,
+        lateralOffset: doorLateralOffset,
+        frontRadius: doorEdgeRadius,
+        yBottom: doorBottom,
+        yTop: doorTop,
+      },
+    };
+
+    if (SHOW_MODULE_DOOR_GUIDE) {
+      const guideDepth = doorDepth + Math.max(xRadius, zRadius) * 0.95;
+      const guideCenter = new THREE.Vector3(center.x, yMin + 0.04, center.z).add(
+        doorDir.clone().multiplyScalar(doorEdgeRadius - guideDepth * 0.5)
+      );
+      guideCenter.add(doorRight.clone().multiplyScalar(doorLateralOffset));
+      const guideStrip = new THREE.Mesh(
+        new THREE.PlaneGeometry(doorWidth * 0.92, guideDepth),
+        new THREE.MeshBasicMaterial({ color: 0x49e7ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide })
+      );
+      guideStrip.rotation.x = -Math.PI / 2;
+      guideStrip.rotation.z = Math.atan2(doorDir.x, doorDir.z);
+      guideStrip.position.copy(guideCenter);
+      this.moduleDoorGuideMeshes.push(guideStrip);
+      this.scene.add(guideStrip);
+
+      const sideOffset = doorWidth * 0.52;
+      const entryBase = new THREE.Vector3(center.x, yMin + 0.2, center.z).add(
+        doorDir.clone().multiplyScalar(doorEdgeRadius - Math.min(0.6, doorDepth * 0.5))
+      );
+      entryBase.add(doorRight.clone().multiplyScalar(doorLateralOffset));
+      [-1, 1].forEach((sign) => {
+        const beacon = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.12, 0.12, 1.2, 10),
+          new THREE.MeshBasicMaterial({ color: 0x8cf5ff, transparent: true, opacity: 0.85 })
+        );
+        beacon.position.copy(entryBase).add(doorRight.clone().multiplyScalar(sign * sideOffset));
+        this.moduleDoorGuideMeshes.push(beacon);
+        this.scene.add(beacon);
+      });
+    }
+
+    if (DEBUG_MODULE_COLLIDERS) {
+      this.clearModuleColliderHelpers();
+      const domeHelperMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 20, 16),
+        new THREE.MeshBasicMaterial({ color: 0xff4d4d, wireframe: true, transparent: true, opacity: 0.35 })
+      );
+      domeHelperMesh.position.copy(this.moduleCollisionShape.center);
+      domeHelperMesh.scale.set(
+        this.moduleCollisionShape.radii.x,
+        this.moduleCollisionShape.radii.y,
+        this.moduleCollisionShape.radii.z
+      );
+      this.moduleDomeHelper = domeHelperMesh;
+      this.scene.add(this.moduleDomeHelper);
+
+      const doorCenter = new THREE.Vector3(center.x, (doorBottom + doorTop) * 0.5, center.z).add(
+        doorDir.clone().multiplyScalar(doorEdgeRadius - doorDepth * 0.5)
+      );
+      const doorHelper = new THREE.Mesh(
+        new THREE.BoxGeometry(doorWidth, doorTop - doorBottom, doorDepth),
+        new THREE.MeshBasicMaterial({ color: 0x4dff9e, wireframe: true, transparent: true, opacity: 0.45 })
+      );
+      doorHelper.position.copy(doorCenter);
+      doorHelper.rotation.y = Math.atan2(doorDir.x, doorDir.z);
+      this.moduleDoorHelper = doorHelper;
+      this.scene.add(this.moduleDoorHelper);
+
+      if (this.roverCollisionHelper) {
+        this.scene.remove(this.roverCollisionHelper);
+        this.roverCollisionHelper = new THREE.Box3Helper(this.roverCollisionBox, 0x1aff8f);
+        this.scene.add(this.roverCollisionHelper);
+      }
+    }
+  }
+
+  ensureModuleCollidersReady() {
+    const style = this.camp?.userData?.moduleStyle ?? "unknown";
+    const signature = `${style}:${this.camp?.children?.length ?? 0}`;
+    if (signature !== this.moduleColliderSignature) {
+      this.moduleColliderSignature = signature;
+      this.rebuildModuleColliders();
+    }
+  }
+
+  isPointInModuleDoorTunnel(point, expand = 0) {
+    const shape = this.moduleCollisionShape;
+    if (!shape) return false;
+    const rel = point.clone().sub(shape.center);
+    const forward = rel.dot(shape.door.dir);
+    const lateral = Math.abs(rel.dot(shape.door.right) - shape.door.lateralOffset);
+    const inDoorHeight = point.y >= shape.door.yBottom - expand && point.y <= shape.door.yTop + expand;
+    const tunnelDepth = shape.door.depth + Math.max(shape.radii.x, shape.radii.z) * 1.15;
+    const inDoorDepth = forward >= shape.door.frontRadius - tunnelDepth - expand && forward <= shape.door.frontRadius + 0.45 + expand;
+    const inDoorWidth = lateral <= shape.door.width * 0.5 + expand;
+    return inDoorHeight && inDoorDepth && inDoorWidth;
+  }
+
+  isPointInsideModuleDome(point, expand = 0) {
+    const shape = this.moduleCollisionShape;
+    if (!shape) return false;
+    const rx = Math.max(0.001, shape.radii.x + expand);
+    const ry = Math.max(0.001, shape.radii.y + expand);
+    const rz = Math.max(0.001, shape.radii.z + expand);
+    const rel = point.clone().sub(shape.center);
+    const q = (rel.x * rel.x) / (rx * rx) + (rel.y * rel.y) / (ry * ry) + (rel.z * rel.z) / (rz * rz);
+    return q <= 1;
+  }
+
+  pushPointOutsideModule(point, padding = 0.04) {
+    const shape = this.moduleCollisionShape;
+    if (!shape) return;
+    const rel = point.clone().sub(shape.center);
+    const rx = Math.max(0.001, shape.radii.x);
+    const ry = Math.max(0.001, shape.radii.y);
+    const rz = Math.max(0.001, shape.radii.z);
+    const q = Math.sqrt((rel.x * rel.x) / (rx * rx) + (rel.y * rel.y) / (ry * ry) + (rel.z * rel.z) / (rz * rz));
+    if (q >= 1 || q <= 0.00001) return;
+    const scale = (1 + padding) / q;
+    rel.multiplyScalar(scale);
+    point.copy(shape.center).add(rel);
+  }
+
+  isRoverCollidingWithModule() {
+    if (!this.roverCollisionHitbox || !this.camp) return false;
+    this.ensureModuleCollidersReady();
+    if (!this.moduleCollisionShape) return false;
+    this.roverCollisionBox.setFromObject(this.roverCollisionHitbox);
+    const shape = this.moduleCollisionShape;
+
+    // Interseccion AABB vs elipsoide: convertimos la caja a espacio normalizado de esfera unidad.
+    const nxMin = (this.roverCollisionBox.min.x - shape.center.x) / shape.radii.x;
+    const nxMax = (this.roverCollisionBox.max.x - shape.center.x) / shape.radii.x;
+    const nyMin = (this.roverCollisionBox.min.y - shape.center.y) / shape.radii.y;
+    const nyMax = (this.roverCollisionBox.max.y - shape.center.y) / shape.radii.y;
+    const nzMin = (this.roverCollisionBox.min.z - shape.center.z) / shape.radii.z;
+    const nzMax = (this.roverCollisionBox.max.z - shape.center.z) / shape.radii.z;
+    const cx = nxMin > 0 ? nxMin : nxMax < 0 ? nxMax : 0;
+    const cy = nyMin > 0 ? nyMin : nyMax < 0 ? nyMax : 0;
+    const cz = nzMin > 0 ? nzMin : nzMax < 0 ? nzMax : 0;
+    const intersectsDome = cx * cx + cy * cy + cz * cz <= 1;
+    if (!intersectsDome) return false;
+
+    // Hueco de puerta: si el centro del rover esta en el corredor frontal, no colisiona.
+    const roverCenter = this.roverCollisionBox.getCenter(new THREE.Vector3());
+    const rel = roverCenter.clone().sub(shape.center);
+    const forward = rel.dot(shape.door.dir);
+    const lateral = Math.abs(rel.dot(shape.door.right) - shape.door.lateralOffset);
+    const inDoorHeight = roverCenter.y >= shape.door.yBottom && roverCenter.y <= shape.door.yTop;
+    // Dejamos un corredor completo de acceso por la puerta (exterior -> interior)
+    // para que el rover atraviese el modulo solo por esa franja.
+    const tunnelDepth = shape.door.depth + Math.max(shape.radii.x, shape.radii.z) * 1.15;
+    const inDoorDepth = forward >= shape.door.frontRadius - tunnelDepth && forward <= shape.door.frontRadius + 0.45;
+    const inDoorWidth = lateral <= shape.door.width * 0.5;
+    if (inDoorHeight && inDoorDepth && inDoorWidth) return false;
+
+    return true;
   }
 
   setupMountainLandmarks() {
@@ -468,7 +754,8 @@ export class WorldScene {
 
     const roughness = Math.max(0, maxContactH - minContactH);
     const roughnessBoost = Math.min(0.22, roughness * 0.05);
-    const baseClearance = 0.68;
+    // +0.03 en clearance para reducir contacto exacto suelo/sombra y evitar artefactos triangulares.
+    const baseClearance = 0.71;
     return { normal: this.tmpUp, y: requiredOriginY + roughnessBoost + baseClearance, roughness };
   }
 
@@ -503,6 +790,88 @@ export class WorldScene {
     this.piruleta.position.set(x, this.getHeightAt(x, z) + 0.4 + extraYOffset, z);
   }
 
+  setPiruletaAnimation(state = "idle", motion = 0, posture = "stable") {
+    this.piruletaAnimState = state;
+    this.piruletaAnimMotion = Math.max(0, Math.min(1, motion));
+    this.piruletaAnimPosture = posture;
+  }
+
+  updatePiruletaAnimation(dt) {
+    const rig = this.piruleta?.userData?.piruletaRig;
+    if (!rig) return;
+    this.piruletaAnimTime += dt;
+    const t = this.piruletaAnimTime;
+
+    const visual = rig.visual;
+    const body = rig.bodyCore;
+    const head = rig.head;
+    const muzzle = rig.muzzle;
+    const base = rig.base;
+    const walkAmp = 0.16 + this.piruletaAnimMotion * 0.22;
+    const posture = this.piruletaAnimPosture ?? "stable";
+    const postureTailBoost = posture === "optimal" ? 1.4 : posture === "critical" ? 0.55 : 1;
+
+    visual.position.copy(base.visualPos);
+    visual.rotation.copy(base.visualRot);
+    visual.scale.set(1, 1, 1);
+    body.scale.copy(base.bodyScale);
+    head.position.copy(base.headPos);
+    if (muzzle) muzzle.position.y = 0.72;
+    rig.tailBase.rotation.copy(base.tailBaseRot);
+    rig.leftEar.rotation.copy(base.earLRot);
+    rig.rightEar.rotation.copy(base.earRRot);
+
+    if (this.piruletaAnimState === "curled") {
+      visual.scale.set(0.82, 0.68, 0.82);
+      visual.rotation.z = -0.22;
+      visual.position.y -= 0.08;
+      head.position.x -= 0.36;
+      head.position.y -= 0.12;
+      if (muzzle) muzzle.position.y -= 0.08;
+      rig.tailBase.rotation.z = base.tailBaseRot.z - 0.38;
+      rig.tailSegments.forEach((seg, idx) => {
+        seg.rotation.y = Math.sin(t * 0.8 + idx * 0.2) * 0.04;
+      });
+      rig.legs.forEach((leg) => {
+        leg.rotation.z = 0;
+      });
+    } else if (this.piruletaAnimState === "walk") {
+      const gait = t * (7.8 + this.piruletaAnimMotion * 2.6);
+      body.scale.y = base.bodyScale.y + Math.sin(gait * 2) * 0.05;
+      visual.position.y += Math.abs(Math.sin(gait)) * 0.035;
+      rig.legs.forEach((leg, idx) => {
+        const sign = idx % 2 === 0 ? 1 : -1;
+        leg.rotation.z = Math.sin(gait + sign * Math.PI * 0.5) * walkAmp;
+      });
+      rig.tailSegments.forEach((seg, idx) => {
+        seg.rotation.y = Math.sin(gait * 0.5 + idx * 0.35) * (0.16 * postureTailBoost);
+      });
+      rig.leftEar.rotation.x = base.earLRot.x + Math.sin(gait) * 0.04;
+      rig.rightEar.rotation.x = base.earRRot.x + Math.sin(gait + Math.PI) * 0.04;
+    } else {
+      const breath = Math.sin(t * 2.1);
+      body.scale.y = base.bodyScale.y + breath * 0.04;
+      head.position.y = base.headPos.y + breath * 0.02;
+      if (posture === "critical") {
+        visual.scale.set(0.92, 0.84, 0.92);
+        head.position.y -= 0.09;
+        head.position.x -= 0.08;
+        if (muzzle) muzzle.position.y -= 0.05;
+        rig.tailBase.rotation.z = base.tailBaseRot.z - 0.26;
+      } else if (posture === "optimal") {
+        visual.scale.set(1.03, 1.02, 1.03);
+        head.position.y += 0.03;
+        rig.tailBase.rotation.z = base.tailBaseRot.z + 0.08;
+      }
+      rig.tailSegments.forEach((seg, idx) => {
+        seg.rotation.y = Math.sin(t * 1.35 + idx * 0.3) * (0.08 * postureTailBoost);
+      });
+      rig.legs.forEach((leg) => {
+        leg.rotation.z = 0;
+      });
+    }
+  }
+
   getReturnShipPosition() {
     return this.returnShip.position;
   }
@@ -526,6 +895,80 @@ export class WorldScene {
     this.tmpLookAt.copy(this.rover.position).add(this.tmpForward);
     this.rover.lookAt(this.tmpLookAt);
     this.applyRoverTerrainVibration(x, z, sample.roughness);
+  }
+
+  updateModuleHabitatVisual(dt, state = {}) {
+    if (this.camp?.userData?.moduleVisuals !== this.moduleVisuals) {
+      this.moduleVisuals = this.camp?.userData?.moduleVisuals ?? null;
+    }
+    if (!this.moduleVisuals) return;
+    this.moduleVisualTime += dt;
+
+    const oxygen = state.oxygen ?? 50;
+    const systemHealth = state.systemHealth ?? 50;
+    const food = state.food ?? 50;
+    const phase = state.phase ?? "survival";
+    const catOutdoor = Boolean(state.catOutdoor);
+
+    let status = "unstable";
+    if (oxygen < 22) status = "danger";
+    else if (oxygen >= gameConfig.oxygenStableThreshold && systemHealth >= gameConfig.maintenanceSafeThreshold) {
+      status = "stable";
+    }
+
+    const lamp = this.moduleVisuals.statusLights ?? [];
+
+    lamp.forEach((node, idx) => {
+      if (!node.material) return;
+      const mat = node.material;
+      let intensity = 0;
+      let colorHex = 0xffb341;
+
+      if (status === "danger") {
+        intensity = Math.sin(this.moduleVisualTime * 11 + idx * 0.9) > -0.2 ? 1.1 : 0.08;
+        colorHex = 0xff4a3a;
+      } else if (status === "unstable") {
+        intensity = Math.sin(this.moduleVisualTime * 5.2 + idx * 1.1) > 0.35 ? 0.75 : 0.14;
+        colorHex = 0xffb341;
+      } else {
+        intensity = 0.78;
+        colorHex = 0x54df7a;
+      }
+      mat.emissive.setHex(colorHex).multiplyScalar(intensity);
+      mat.color.set(0x252525);
+    });
+
+    const plumeOpacity =
+      status === "danger" ? 0.35 + Math.sin(this.moduleVisualTime * 7.4) * 0.1 : status === "unstable" ? 0.12 : 0;
+    (this.moduleVisuals.steamPlumes ?? []).forEach((plume, idx) => {
+      if (!plume.material) return;
+      plume.material.opacity = Math.max(0, plumeOpacity);
+      plume.position.y = 2.05 + Math.sin(this.moduleVisualTime * 1.8 + idx * 1.3) * 0.11;
+      plume.scale.setScalar(1 + Math.sin(this.moduleVisualTime * 2.5 + idx * 0.8) * 0.08);
+    });
+
+    const catVisible = !(catOutdoor || phase === "final");
+    const catBody = this.moduleVisuals.piruloSilhouette;
+    const catEars = this.moduleVisuals.piruloEars ?? [];
+    if (catBody) {
+      catBody.visible = catVisible;
+      if (catVisible) {
+        if (status === "danger" || food < 25) {
+          catBody.position.x = 0;
+          catBody.position.y = 2.1;
+        } else {
+          catBody.position.x = Math.sin(this.moduleVisualTime * 1.9) * 0.12;
+          catBody.position.y = 2.16 + Math.sin(this.moduleVisualTime * 3.8) * 0.04;
+        }
+      }
+    }
+    catEars.forEach((ear, idx) => {
+      ear.visible = catVisible;
+      if (!catVisible || !catBody) return;
+      const xOffset = idx === 0 ? -0.1 : 0.1;
+      ear.position.x = catBody.position.x + xOffset;
+      ear.position.y = catBody.position.y + 0.21;
+    });
   }
 
   applyRoverTerrainVibration(x, z, terrainRoughness) {
@@ -596,6 +1039,16 @@ export class WorldScene {
     const minY = this.getHeightAt(this.tmpCamResolved.x, this.tmpCamResolved.z) + groundClearance;
     if (this.tmpCamResolved.y < minY) this.tmpCamResolved.y = minY;
 
+    // Colision de camara con modulo: evita atravesar la cupula salvo por el tunel de puerta.
+    this.ensureModuleCollidersReady();
+    if (
+      this.moduleCollisionShape &&
+      this.isPointInsideModuleDome(this.tmpCamResolved, 0.02) &&
+      !this.isPointInModuleDoorTunnel(this.tmpCamResolved, 0.12)
+    ) {
+      this.pushPointOutsideModule(this.tmpCamResolved, 0.04);
+    }
+
     if (Number.isFinite(maxDistance)) {
       this.tmpCamDir.subVectors(this.tmpCamResolved, anchor);
       const d = this.tmpCamDir.length();
@@ -612,6 +1065,20 @@ export class WorldScene {
     const region = this.getTerrainRegion(p.x, p.z);
     const inCave = region === "cueva";
     const roverGroundY = this.getHeightAt(p.x, p.z);
+
+    this.ensureModuleCollidersReady();
+    if (
+      this.moduleCollisionShape &&
+      this.isPointInsideModuleDome(p, 0.65) &&
+      this.isPointInModuleDoorTunnel(p, 1.05) &&
+      !this.moduleAutoFirstPersonTriggered
+    ) {
+      this.setCameraMode("first_person");
+      this.moduleAutoFirstPersonTriggered = true;
+    }
+    if (this.moduleAutoFirstPersonTriggered && !this.isPointInsideModuleDome(p, 0.35)) {
+      this.moduleAutoFirstPersonTriggered = false;
+    }
 
     if (this.cameraMode === "first_person") {
       const eyeHeight = inCave ? 1.68 : 1.95;
