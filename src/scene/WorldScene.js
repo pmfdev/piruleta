@@ -210,6 +210,8 @@ export class WorldScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.ground = null;
     this.rover = null;
@@ -235,6 +237,9 @@ export class WorldScene {
     this.cameraOrbitPitch = 0;
     this.lookInput = { x: 0, y: 0, strength: 0 };
     this.cameraMode = "follow";
+    this.roverVibePhase = 0;
+    this.lastRoverPos = null;
+    this.roverVisualState = { y: 0, pitch: 0, roll: 0 };
 
     this.setupLights();
     this.setupTerrain();
@@ -247,6 +252,15 @@ export class WorldScene {
     this.scene.add(new THREE.HemisphereLight(0xffd8bf, 0x3b2520, 0.48));
     const key = new THREE.DirectionalLight(0xffdeb8, 1.2);
     key.position.set(30, 45, 10);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.near = 1;
+    key.shadow.camera.far = 180;
+    key.shadow.camera.left = -75;
+    key.shadow.camera.right = 75;
+    key.shadow.camera.top = 75;
+    key.shadow.camera.bottom = -75;
+    key.shadow.bias = -0.0002;
     this.scene.add(key);
 
     const fill = new THREE.DirectionalLight(0xff8f5d, 0.28);
@@ -295,6 +309,13 @@ export class WorldScene {
     this.rover = this.factory.createRover();
     this.piruleta = this.factory.createPiruleta();
     this.camp = this.factory.createCamp();
+    this.piruleta.castShadow = true;
+    this.piruleta.receiveShadow = true;
+    this.camp.traverse?.((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+    });
 
     this.setObjectXZ(this.rover, mapLayout.spawn.x, mapLayout.spawn.z, 0);
     this.setObjectXZ(this.piruleta, mapLayout.piruleta.x, mapLayout.piruleta.z, 0.4);
@@ -303,6 +324,8 @@ export class WorldScene {
 
     mapLayout.stations.forEach((s) => {
       const mesh = this.factory.createStation();
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.setObjectXZ(mesh, s.x, s.z, 0.9);
       this.scene.add(mesh);
       this.stations.push({ ...s, mesh });
@@ -310,6 +333,8 @@ export class WorldScene {
 
     mapLayout.rocks.forEach((r) => {
       const rock = this.factory.createRock(r.r);
+      rock.castShadow = true;
+      rock.receiveShadow = true;
       this.setObjectXZ(rock, r.x, r.z, r.r * 0.65);
       this.scene.add(rock);
       this.rocks.push({ ...r, mesh: rock });
@@ -426,8 +451,10 @@ export class WorldScene {
       }
     }
 
-    const roughnessBoost = Math.min(0.22, Math.max(0, maxContactH - minContactH) * 0.05);
-    return { normal: this.tmpUp, y: requiredOriginY + roughnessBoost };
+    const roughness = Math.max(0, maxContactH - minContactH);
+    const roughnessBoost = Math.min(0.22, roughness * 0.05);
+    const baseClearance = 0.68;
+    return { normal: this.tmpUp, y: requiredOriginY + roughnessBoost + baseClearance, roughness };
   }
 
   getTerrainRegion(x, z) {
@@ -471,6 +498,53 @@ export class WorldScene {
     this.rover.up.copy(groundNormal);
     this.tmpLookAt.copy(this.rover.position).add(this.tmpForward);
     this.rover.lookAt(this.tmpLookAt);
+    this.applyRoverTerrainVibration(x, z, sample.roughness);
+  }
+
+  applyRoverTerrainVibration(x, z, terrainRoughness) {
+    const visualRoot = this.rover?.children?.[0];
+    if (!visualRoot) return;
+
+    if (!visualRoot.userData.baseVisualTransform) {
+      visualRoot.userData.baseVisualTransform = {
+        y: visualRoot.position.y,
+        rx: visualRoot.rotation.x,
+        rz: visualRoot.rotation.z,
+      };
+    }
+    const base = visualRoot.userData.baseVisualTransform;
+
+    if (!this.lastRoverPos) {
+      this.lastRoverPos = { x, z };
+      return;
+    }
+
+    const dx = x - this.lastRoverPos.x;
+    const dz = z - this.lastRoverPos.z;
+    this.lastRoverPos = { x, z };
+    const travel = Math.hypot(dx, dz);
+    const speedFactor = Math.min(1, travel * 28);
+    const roughFactor = Math.min(1, Math.max(0, terrainRoughness) * 2.2);
+    const intensity = Math.min(0.028, (0.006 + roughFactor * 0.03) * speedFactor);
+
+    if (intensity < 0.0005) {
+      this.roverVisualState.y *= 0.75;
+      this.roverVisualState.pitch *= 0.75;
+      this.roverVisualState.roll *= 0.75;
+    } else {
+      this.roverVibePhase += 0.22 + speedFactor * 0.36 + roughFactor * 0.2;
+      const targetY = Math.sin(this.roverVibePhase * 1.8) * intensity;
+      const targetPitch = Math.sin(this.roverVibePhase * 1.35 + 0.7) * intensity * 0.9;
+      const targetRoll = Math.sin(this.roverVibePhase * 1.12 + 1.3) * intensity * 1.05;
+
+      this.roverVisualState.y += (targetY - this.roverVisualState.y) * 0.35;
+      this.roverVisualState.pitch += (targetPitch - this.roverVisualState.pitch) * 0.3;
+      this.roverVisualState.roll += (targetRoll - this.roverVisualState.roll) * 0.3;
+    }
+
+    visualRoot.position.y = base.y + this.roverVisualState.y;
+    visualRoot.rotation.x = base.rx + this.roverVisualState.pitch;
+    visualRoot.rotation.z = base.rz + this.roverVisualState.roll;
   }
 
   resolveCameraCollision(anchor, desired, groundClearance, maxDistance = Infinity) {
@@ -513,10 +587,11 @@ export class WorldScene {
     const roverGroundY = this.getHeightAt(p.x, p.z);
 
     if (this.cameraMode === "first_person") {
-      const eyeHeight = inCave ? 1.35 : 1.6;
-      const eyeY = Math.max(p.y + eyeHeight, roverGroundY + 1.15);
-      const camX = p.x + Math.sin(yaw) * 0.45;
-      const camZ = p.z + Math.cos(yaw) * 0.45;
+      const eyeHeight = inCave ? 1.68 : 1.95;
+      const eyeY = Math.max(p.y + eyeHeight, roverGroundY + 1.45);
+      const camForwardOffset = 0.78;
+      const camX = p.x + Math.sin(yaw) * camForwardOffset;
+      const camZ = p.z + Math.cos(yaw) * camForwardOffset;
       this.camera.position.set(camX, eyeY, camZ);
 
       const lookDist = 9;
